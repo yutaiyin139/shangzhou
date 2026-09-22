@@ -1,0 +1,94 @@
+{
+  "round1_question": "1. **时间范围**：您关注的“最新”是指过去 6 个月、过去 1 年，还是过去 2-3 年？是否需要包含尚未正式发表但已公开的预印本（如 arXiv、bioRxiv）成果？\n2. **技术路线侧重**：您希望重点分析侵入式（如 Neuralink、Blackrock、Synchron 等）还是非侵入式（如 EEG、fNIRS、超声等）脑机接口？还是两者兼顾并做对比？\n3. **应用领域聚焦**：您最关心哪些应用方向？例如：医疗康复（瘫痪、渐冻症、抑郁症等）、消费级交互（游戏、注意力监测）、军事/航天、还是基础神经科学解码？\n4. **地域与机构范围**：您是否希望侧重特定国家或地区（如美国、中国、欧盟）的研究进展？是否需要包含主要科技公司（Neuralink、Meta、Apple、华为等）与学术机构（MIT、斯坦福、清华、中科院等）的对比？",
+  "round2_queries": [
+    "non-invasive brain-computer interface EEG fNIRS tDCS 2020..2025 review site:pubmed.ncbi.nlm.nih.gov",
+    "minimally invasive brain-computer interface stent electrode cortical surface 2020..2025 clinical trial site:clinicaltrials.gov",
+    "FDA guidance brain-computer interface medical device 2020..2025 filetype:pdf",
+    "NMPA brain-computer interface regulatory approval 2020..2025 site:nmpa.gov.cn",
+    "China US brain-computer interface funding DARPA NIH 2020..2025 site:nih.gov",
+    "brain-computer interface stroke rehabilitation spinal cord injury clinical trial China US 2020..2025 site:clinicaltrials.gov",
+    "invasive brain-computer interface epilepsy Parkinson depression 2020..2025 review site:pubmed.ncbi.nlm.nih.gov",
+    "brain-computer interface industry report China US 2020..2025 filetype:pdf"
+  ],
+  "report_head": "# 脑机接口最新研究进展：非侵入式与微创技术的医疗应用（2020–2025）\n\n## 摘要\n\n脑机接口（Brain-Computer Interface, BCI）正处于从实验室验证向临床转化加速的关键阶段。2020至2025年间，非侵入式与微创BCI在瘫痪康复和神经疾病治疗两大方向取得了显著进展。美国以Neuralink、Synchron、Blackrock Neurotech等企业为代表，在微创植入式设备上推进临床试验；中国以NEO（Neuracle）、脑虎科技等为代表，在硬膜外电极和介入式路径上形成差异化竞争。本报告基于公开文献、临床试验注册信息及企业披露资料，系统梳理两国在技术路线、临床进展与产业化方面的最新动态，并分析当前面临的核心挑战与未来方向。\n\n## 背景\n\n脑机接口通过直接解码中枢神经系统信号，建立大脑与外部设备之间的通信通路，为严重运动功能障碍和神经疾病患者提供了传统康复手段之外的新选择。根据信号采集方式，BCI可分为非侵入式（头皮脑电EEG、功能性近红外光谱fNIRS等）、微创式（硬膜外/硬膜下电极、血管内电极）和侵入式（穿透皮层微电极阵列）三类。本报告聚焦前两类",
+  "results": [
+    {
+      "item": "首轮运行完成",
+      "expected": "status=succeeded",
+      "actual": "succeeded",
+      "status": "PASS"
+    },
+    {
+      "item": "LLM1「理解主题&生成研究计划」输出含「澄清问题」",
+      "expected": "包含（PDF：首轮应提问澄清）",
+      "actual": "**研究主题**: 脑机接口（BCI）最新研究进展的系统性分析  **初步理解**: 您希望了解脑机接口领域近期的研究突破与发展动态。该主题涉及多个维度，包括技术路线（侵入式/非侵入式）、应用场景（医",
+      "status": "PASS"
+    },
+    {
+      "item": "分类器「判断是否已澄清」判定",
+      "expected": "与 LLM1 输出一致（含澄清问题→需要用户澄清）",
+      "actual": "需要用户澄清",
+      "status": "PASS"
+    },
+    {
+      "item": "参数提取器提取澄清问题 question",
+      "expected": "提取到非空问题文本",
+      "actual": "1. **时间范围**：您关注的“最新”是指过去 6 个月、过去 1 年，还是过去 2-3 年？是否需要包含尚未正式发表但已公开的预印本（如 arXiv、bioRxiv）成果？\n2. **技术路线侧重",
+      "status": "PASS"
+    },
+    {
+      "item": "次轮运行完成",
+      "expected": "status=succeeded",
+      "actual": "succeeded",
+      "status": "PASS"
+    },
+    {
+      "item": "LLM1 次轮直接输出研究计划",
+      "expected": "不再提问，输出结构化研究计划",
+      "actual": "**研究主题**：2020–2025年非侵入式与微创脑机接口在医疗健康应用中的最新研究进展——中国与美国的比较分析  **初步理解**：该主题聚焦于非侵入式（如EEG、fNIRS、tDCS等）和微创（",
+      "status": "PASS"
+    },
+    {
+      "item": "次轮分类器判定",
+      "expected": "无需澄清",
+      "actual": "无需澄清",
+      "status": "PASS"
+    },
+    {
+      "item": "LLM2「生成 SERP 查询」输出合法 JSON 且 5-8 条",
+      "expected": "JSON 含 count 与 queryArray，长度 5-8",
+      "actual": "count=8 len=8",
+      "status": "PASS"
+    },
+    {
+      "item": "参数提取器「提取信息检索条件数组」",
+      "expected": "count>=3 且 queryList 为数组",
+      "actual": "count=8 queryList=[\"non-invasive brain-computer interface EEG fNIRS tDCS 2020..2025 review site:pubmed.ncbi.nlm.nih.gov\", \"minimally invasive brain-computer interface stent electrode cortical surface 2020..2025 clinica",
+      "status": "PASS"
+    },
+    {
+      "item": "迭代节点「信息检索批处理」执行轮数",
+      "expected": "iteration_count == len(queryList)",
+      "actual": "iteration_count=8 len(queryList)=8",
+      "status": "PASS"
+    },
+    {
+      "item": "知识检索命中内容（迭代输出含检索结果）",
+      "expected": "包含脑机接口相关知识片段",
+      "actual": "\"# 脑机接口最新研究进展：非侵入式与微创技术的医疗应用（2020–2025）\\n\\n## 摘要\\n\\n脑机接口（Brain-Computer Interface, BCI）正处于从实验室验证向临床转化加速的关键阶段。2020至2025年间，非侵入式与微创BCI在瘫痪康复和神经疾病治疗两大方向取得了",
+      "status": "PASS"
+    },
+    {
+      "item": "LLM3「信息整合与深度研究」生成报告",
+      "expected": "Markdown 含摘要/背景/主要发现/未来展望，>800字",
+      "actual": "len=4237 sections=['摘要', '背景', '主要发现', '未来展望'] head=# 脑机接口最新研究进展：非侵入式与微创技术的医疗应用（2020–2025）  ## 摘要  脑机接口（Brain-Computer Interface, BC",
+      "status": "PASS"
+    },
+    {
+      "item": "发布后提问（第三次运行）",
+      "expected": "succeeded 且输出报告",
+      "actual": "status=succeeded report_len=3763",
+      "status": "PASS"
+    }
+  ]
+}

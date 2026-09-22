@@ -1,0 +1,173 @@
+{
+  "summary": {
+    "app_id": "3847078a-b212-4ed0-9043-ea1d8a86b9ce",
+    "dataset_id": "585620ba-a69b-4c99-b2d9-6e7260e89771",
+    "elapsed_round1": 5.8,
+    "elapsed_round2": 23.6,
+    "round1": {
+      "classification": {
+        "class_id": "1",
+        "class_index": 0,
+        "class_label": "需要用户澄清",
+        "class_name": "输出包含“澄清问题”小节，需要用户澄清"
+      },
+      "question": "您关注的“最新”时间范围是多久？例如近1年、近3年，还是自2020年以来？",
+      "llm1_head": "**研究主题**:脑机接口（BCI）最新研究进展分析\n\n**初步理解**:您希望了解脑机接口领域近期的研究突破与技术演进，包括侵入式/非侵入式技术路线、关键应用场景（如医疗康复、人机交互）以及代表性团队或成果。由于“最新”和“研究进展”的范围较广，需要进一步明确边界，才能提供有针对性的分析。\n\n**澄清问题**:\n1. 您关注的“最新”时间范围是多久？例如近1年、近3年，还是自2020年以来？\n2"
+    },
+    "round2": {
+      "classification": "无需澄清",
+      "queryList": [
+        "2020-2025年，非侵入式脑机接口在瘫痪康复（如运动想象、功能性电刺激）和神经疾病治疗（如癫痫、抑郁症、帕金森病）中，中美各自开展了哪些代表性临床试验？主要结局指标（如信号解码准确率、功能改善量表）如何？",
+        "微创脑机接口（如血管内支架电极、皮层表面电极、内窥镜植入）在中美两国2020-2025年间有哪些新设备或新术式进入临床或临床前研究？其安全性与长期稳定性数据如何？",
+        "中美在非侵入式与微创脑机接口领域的关键技术指标（如通道数、信噪比、延迟、无线传输、生物相容性）上各自达到什么水平？是否存在可量化的差距或互补优势？",
+        "2020-2025年，中美两国政府（如中国科技部、美国NIH/DARPA）及主要企业（如Neuralink、Synchron、BrainCo、博睿康）在非侵入式/微创脑机接口医疗应用上的资助、审批与产业化路径有何异同？",
+        "针对瘫痪康复和神经疾病治疗，非侵入式与微创脑机接口分别面临哪些尚未解决的科学与工程瓶颈（如长期稳定性、个体差异、解码算法泛化）？中美研究团队提出的主要解决策略是什么？"
+      ],
+      "iteration_count": 5,
+      "report_head": "# 2020—2025年中美非侵入式与微创脑机接口医疗应用研究进展报告\n\n## 摘要\n\n脑机接口（Brain-Computer Interface, BCI）作为连接神经系统与外部设备的信息通路，近年来在医疗健康领域取得显著进展。本报告聚焦2020—2025年间中国与美国在非侵入式与微创脑机接口领域的研究进展，围绕瘫痪康复与神经疾病治疗两大应用场景，从技术指标、临床证据、监管路径与产业生态四个维度进行系统比较。研究发现：非侵入式BCI在运动想象解码与神经调控方面已积累较多临床证据，中美差距逐步缩小；微创BCI领域美国在企业主导的血管内支架电极与高通量皮层电极方面保持领先，中国在柔性电极材料与临",
+      "report_len": 3898
+    }
+  },
+  "results": [
+    {
+      "step": "预备",
+      "item": "登录获取 token",
+      "expected": "200 + access_token",
+      "actual": "code=200 token=eyJhbGciOiJIUzI1NiIs...",
+      "status": "PASS"
+    },
+    {
+      "step": "第五步",
+      "item": "上传文件创建知识库「脑机接口研究资料」",
+      "expected": "返回 dataset id",
+      "actual": "code=200 id=585620ba-a69b-4c99-b2d9-6e7260e89771 segments=2",
+      "status": "PASS"
+    },
+    {
+      "step": "第五步",
+      "item": "触发 Embedding 生成",
+      "expected": "202 + task_id",
+      "actual": "code=202 task=7b596fb4-f19c-43ba-a632-c5a47f169987",
+      "status": "PASS"
+    },
+    {
+      "step": "第五步",
+      "item": "等待 Embedding 完成",
+      "expected": "SUCCESS",
+      "actual": "state=SUCCESS result={\"batches\": 2, \"dataset_id\": \"585620ba-a69b-4c99-b2d9-6e7260e89771\", \"elapsed_time\": 17.65014624595642, \"processed\": 2, \"status\": \"succeeded\"}",
+      "status": "PASS"
+    },
+    {
+      "step": "第一步",
+      "item": "复用已创建的工作流应用「深度研究助手」",
+      "expected": "应用存在",
+      "actual": "app_id=3847078a-b212-4ed0-9043-ea1d8a86b9ce",
+      "status": "PASS"
+    },
+    {
+      "step": "第二~六步",
+      "item": "保存工作流图（输入/LLM/分类器/参数提取x2/迭代+知识检索/报告LLM/结束，共10节点）",
+      "expected": "200",
+      "actual": "code=200 msg=保存成功",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "获取运行输入表单（由开始节点 variables 生成）",
+      "expected": "包含必填字段 input01",
+      "actual": "[{\"label\": \"研究主题\", \"max_length\": 4000, \"options\": [], \"required\": true, \"type\": \"paragraph\", \"variable\": \"input01\"}]",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "首轮测试运行「分析脑机接口的最新研究进展」",
+      "expected": "status=succeeded，输出包含澄清问题",
+      "actual": "http=200 status=succeeded elapsed=5.8s",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "LLM1「理解主题&生成研究计划」输出澄清问题",
+      "expected": "包含「澄清问题」小节",
+      "actual": "**研究主题**:脑机接口（BCI）最新研究进展分析  **初步理解**:您希望了解脑机接口领域近期的研究突破与技术演进，包括侵入式/非侵入式技术路线、关键应用场景（如医疗康复、人机交互）以及代表性团队或成果。由于“最新”和“研究进展”的范",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "问题分类器「判断是否已澄清」判定结果",
+      "expected": "class_label=需要用户澄清",
+      "actual": "{\"class_id\": \"1\", \"class_index\": 0, \"class_label\": \"需要用户澄清\", \"class_name\": \"输出包含“澄清问题”小节，需要用户澄清\"}",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "参数提取器提取澄清问题 question",
+      "expected": "提取到非空问题文本",
+      "actual": "您关注的“最新”时间范围是多久？例如近1年、近3年，还是自2020年以来？",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步(平台差异)",
+      "item": "首轮运行是否继续执行「生成SERP查询/知识检索/报告」分支",
+      "expected": "按 PDF 语义应在澄清后结束（分类器分支未命中则不执行后续节点）",
+      "actual": "serp_params={} iteration_count=None report_len=387",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "次轮测试运行（已补充澄清信息）",
+      "expected": "status=succeeded，生成完整研究报告",
+      "actual": "http=200 status=succeeded elapsed=23.6s",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "次轮分类器判定",
+      "expected": "class_label=无需澄清",
+      "actual": "无需澄清",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "提取检索条件数组 queryList",
+      "expected": "数组长度>=3",
+      "actual": "count=5 queryList=[\"2020-2025年，非侵入式脑机接口在瘫痪康复（如运动想象、功能性电刺激）和神经疾病治疗（如癫痫、抑郁症、帕金森病）中，中美各自开展了哪些代表性临床试验？主要结局指标（如信号解码准确率、功能改善量表）如何？\", \"微创脑机接口（如血管内支架电极、皮层表面电极、内窥镜植入）在中美两国2020-2025年间有哪些新设备或新术式进入临床或临床前研究？其安全性与长期稳定性数据如何？\", \"中美在非侵",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "迭代节点「信息检索批处理」执行",
+      "expected": "iteration_count == len(queryList)",
+      "actual": "iteration_count=5",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "LLM3「信息整合与深度研究」生成报告",
+      "expected": "Markdown 报告，含摘要/背景等小节，>800字",
+      "actual": "report_len=3898 head=# 2020—2025年中美非侵入式与微创脑机接口医疗应用研究进展报告  ## 摘要  脑机接口（Brain-Computer Interface, BCI）作为连接神经系统与外部设备的信息通路，近年",
+      "status": "PASS"
+    },
+    {
+      "step": "第七步",
+      "item": "运行详情含逐节点执行记录",
+      "expected": "可查询到节点级 inputs/outputs",
+      "actual": "node_records=8",
+      "status": "PASS"
+    },
+    {
+      "step": "第八步",
+      "item": "发布工作流",
+      "expected": "返回 version_number",
+      "actual": "code=200 data={\"name\": \"v1.0\", \"version_number\": 10}",
+      "status": "PASS"
+    },
+    {
+      "step": "第八步",
+      "item": "发布后提问（再次运行）",
+      "expected": "succeeded 且返回报告",
+      "actual": "status=succeeded report_len=3942",
+      "status": "PASS"
+    }
+  ]
+}

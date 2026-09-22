@@ -1,0 +1,112 @@
+# ============================================================
+# 熵舟 · 智能体工作台 —— .gitignore
+# 原则：源码入库；密钥/依赖/缓存/日志/数据库数据/第三方参考目录一律不入库
+# ============================================================
+
+# ---------- 敏感凭据（绝不入库）----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+**/.jwt_secret
+**/.encryption_key
+**/.env
+.claude/
+dify_accounts.txt
+*_secret*
+!*secret*.py
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+develop-eggs/
+.Python
+venv/
+env/
+virtualenv/
+venv_libs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+pip-selfcheck.json
+
+# ---------- Celery / 运行时状态 ----------
+celerybeat-schedule
+celerybeat-schedule-*
+celerybeat-schedule*
+*.pid
+
+# ---------- Node / 前端 ----------
+node_modules/
+front/dist/
+dist/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- 日志 ----------
+logs/
+*.log
+flask.log
+flask-error.log
+
+# ---------- 本地数据 / 缓存 / 存储 ----------
+backend/cache/
+backend/data/
+storage/
+snapshots/
+*.rdb
+dump.rdb
+backups/
+*.bak
+
+# ---------- 向量库 / 中间件（本地运行时目录，含数据与二进制，整目录不入库）----------
+qdrant/
+Redis-8.10.1/
+.qdrant-initialized
+
+# ---------- 第三方参考代码（仅本地对照，不入本仓库）----------
+dify-1.17.1/
+
+# ---------- 打包产物 / 大文件 ----------
+*.zip
+*.tar.gz
+*.7z
+*.exe
+
+# ---------- 编辑器 / 操作系统 ----------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.sublime-workspace
+*.sublime-project
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Office 临时锁文件 ----------
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+# ---------- 误产物 / 临时诊断脚本 ----------
+# pip `install pkg >=5.0.0` 未加引号会生成以 = 开头的垃圾文件
+=*
+# 一次性临时诊断脚本（tmp_ 前缀）
+tmp_*.py
+_tmp_*.py
+# 拆分/重构时的单体备份（如 workflow_runner_orig.py），靠 git 历史保留，不入库
+*_orig.py
+
