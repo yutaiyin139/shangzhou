@@ -31,6 +31,7 @@ UPLOADS = [
     ("backend", "backend"),
     (os.path.join("front", "dist"), "front/dist"),
     ("scripts/deploy-ubuntu-online.sh", "deploy-ubuntu-online.sh"),
+    ("scripts/szagent-ctl.sh", "scripts/szagent-ctl.sh"),
 ]
 
 

@@ -107,6 +107,11 @@ PIP="$APP_DIR/venv/bin/pip"
 # ---------------------------- 4. 权限 ----------------------------------------
 log "步骤 4/8  修正目录权限"
 mkdir -p "$APP_DIR/backend/logs"
+# 服务控制脚本（一键启停）：去 CRLF + 可执行
+if [ -f "$APP_DIR/scripts/szagent-ctl.sh" ]; then
+    sed -i 's/\r$//' "$APP_DIR/scripts/szagent-ctl.sh"
+    chmod +x "$APP_DIR/scripts/szagent-ctl.sh"
+fi
 # 应用目录归属运行用户（服务以 $APP_USER 身份运行）
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 chmod 750 "$APP_DIR"
