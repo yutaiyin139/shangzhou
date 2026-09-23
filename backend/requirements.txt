@@ -10,6 +10,12 @@ Flask-SocketIO>=5.6.0
 PyMySQL>=1.1.0
 DBUtils>=3.1.0
 
+# ===== 环境变量加载 =====
+python-dotenv>=1.0.0
+
+# ===== HTTP 客户端（模型探活/市场同步/工具调用）=====
+requests>=2.31.0
+
 # ===== 缓存 / 消息队列 =====
 redis>=5.0.0
 celery[redis]>=5.6.0
@@ -34,5 +40,6 @@ psutil>=5.9.0
 PyYAML>=6.0
 python-docx>=1.1.0
 pypdf>=4.0.0
+PyPDF2>=3.0.0
 openpyxl>=3.1.0
 croniter>=2.0.0  # trigger-schedule 节点 cron 解析

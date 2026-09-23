@@ -270,7 +270,7 @@ def _start_redis_listener():
         return
 
     _redis_listener_thread = threading.Thread(
-        target._redis_listener_loop,
+        target=_redis_listener_loop,
         daemon=True,
         name='ws-redis-listener',
     )

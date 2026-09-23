@@ -170,7 +170,7 @@ interactive_config() {
     echo -e "   10. 自动备份配置"
     echo ""
 
-    read -p "$(echo -e ${YELLOW}是否开始部署? (y/N): ${NC})" confirm
+    read -p "$(echo -e "${YELLOW}是否开始部署? (y/N): ${NC}")" confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         log_info "已取消部署"
         exit 0
@@ -207,7 +207,7 @@ interactive_config() {
     echo -e "  SSL: ${BOLD}${SETUP_SSL}${NC}"
     echo ""
 
-    read -p "$(echo -e ${YELLOW}确认开始部署? (y/N): ${NC})" confirm
+    read -p "$(echo -e "${YELLOW}确认开始部署? (y/N): ${NC}")" confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         log_info "已取消部署"
         exit 0
@@ -371,6 +371,7 @@ step4_install_redis() {
 
     # 配置 Redis
     log_info "配置 Redis..."
+    mkdir -p /etc/redis/redis.conf.d
     cat > /etc/redis/redis.conf.d/szagent.conf <<EOF
 # 密码配置
 requirepass ${REDIS_PASSWORD}
@@ -765,72 +766,37 @@ step10_setup_nginx() {
     fi
 
     cat > /etc/nginx/sites-available/szagent <<EOF
-# 熵舟·智能体工作台 - Nginx 配置
+# Shangzhou Workbench - Nginx (HTTP)
+# If DOMAIN is set + SSL enabled, certbot (step 11) auto-upgrades to HTTPS.
 
-upstream szagent_backend {
-    server 127.0.0.1:5000;
-    keepalive 32;
-}
-
-# HTTP 服务器
 server {
     listen 80;
+    listen [::]:80;
     server_name ${server_name};
 
-    # ACME challenge (Let's Encrypt)
+    root ${DEPLOY_DIR}/front/dist;
+    index index.html;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    access_log /var/log/nginx/szagent_access.log;
+    error_log /var/log/nginx/szagent_error.log;
+
+    client_max_body_size 50M;
+
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
 
-    # 其他请求
-    location / {
-        return 301 https://\$server_name\$request_uri;
-    }
-}
-
-# HTTPS 服务器
-server {
-    listen 443 ssl http2;
-    server_name ${server_name};
-
-    # SSL 证书 (稍后配置)
-    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-
-    # SSL 配置
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
-
-    # 安全头
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    # 日志
-    access_log /var/log/nginx/szagent_access.log;
-    error_log /var/log/nginx/szagent_error.log;
-
-    # 上传大小限制
-    client_max_body_size 50M;
-
-    # 静态文件
-    root ${DEPLOY_DIR}/front/dist;
-    index index.html;
-
-    # 静态资源缓存
-    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        try_files \$uri =404;
+    location = /health {
+        proxy_pass http://127.0.0.1:${BACKEND_PORT}/api/health;
+        access_log off;
     }
 
-    # API 代理
     location /api/ {
-        proxy_pass http://szagent_backend;
+        proxy_pass http://127.0.0.1:${BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -843,29 +809,26 @@ server {
         proxy_read_timeout 300s;
     }
 
-    # WebSocket
     location /ws/ {
-        proxy_pass http://szagent_backend;
+        proxy_pass http://127.0.0.1:${BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
     }
 
-    # 健康检查
-    location /health {
-        proxy_pass http://szagent_backend/api/health;
-        access_log off;
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files \$uri =404;
     }
 
-    # 前端路由
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
-
-    # 禁止访问敏感文件
     location ~ /\\. {
         deny all;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
     }
 }
 EOF
@@ -896,6 +859,7 @@ step11_setup_ssl() {
     # 安装 Certbot
     log_info "安装 Certbot..."
     apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
+    mkdir -p /var/www/certbot
 
     # 获取证书
     log_info "获取 SSL 证书..."

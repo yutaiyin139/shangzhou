@@ -133,6 +133,8 @@ if ($StopCount -gt 0) {
 
 Write-Host ""
 Write-Host " Tips:"
-Write-Host "  - Start services: start-all.bat"
-Write-Host "  - Health check:   check-health.bat"
+Write-Host "  - Start services:     start-all.bat"
+Write-Host "  - Stop frontend only: stop-front.bat"
+Write-Host "  - Stop backend only:  stop-backend.bat"
+Write-Host "  - Health check:       check-health.bat"
 Write-Host ""

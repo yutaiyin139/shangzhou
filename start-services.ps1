@@ -53,6 +53,21 @@ function Start-DetachedProcess {
     [System.Diagnostics.Process]::Start($psi) | Out-Null
 }
 
+# Helper: poll a TCP listen port until it appears or timeout (seconds).
+# Replaces fixed short sleeps that falsely report "failed to start" when a
+# service (Flask import / Vite cold start) is merely slow to bind its port.
+function Wait-ForPort {
+    param([int]$Port, [int]$TimeoutSec = 30)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+}
+
 Write-Host ""
 Write-Host "============================================"
 Write-Host "  Shangzhou Smart Workbench - Starting"
@@ -115,12 +130,10 @@ if ($flaskPort) {
     Write-Host "  [OK] Backend already running (port 5000)"
 } elseif (Test-Path "$BackendDir\app.py") {
     Start-DetachedProcess -WorkingDirectory $BackendDir -Command "`"$PythonPath`" app.py"
-    Start-Sleep -Seconds 5
-    $flaskPort = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue
-    if ($flaskPort) {
+    if (Wait-ForPort -Port 5000 -TimeoutSec 40) {
         Write-Host "  [OK] Backend started"
     } else {
-        Write-Host "  [WARN] Backend may have failed to start. Check port 5000."
+        Write-Host "  [WARN] Backend did not bind port 5000 within 40s. Check backend logs."
         $WarnCount++
     }
 } else {
@@ -145,12 +158,10 @@ if ($vitePort) {
         Pop-Location
     }
     Start-DetachedProcess -WorkingDirectory $FrontendDir -Command "npm run dev"
-    Start-Sleep -Seconds 8
-    $vitePort = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue
-    if ($vitePort) {
+    if (Wait-ForPort -Port 5173 -TimeoutSec 45) {
         Write-Host "  [OK] Frontend started"
     } else {
-        Write-Host "  [WARN] Frontend may have failed to start. Check port 5173."
+        Write-Host "  [WARN] Frontend did not bind port 5173 within 45s. Check front terminal."
         $WarnCount++
     }
 } else {
@@ -207,6 +218,8 @@ Write-Host ""
 Write-Host "============================================"
 Write-Host ""
 Write-Host " Tips:"
-Write-Host "  - Stop all services: stop-all.bat"
-Write-Host "  - Health check:      check-health.bat"
+Write-Host "  - Stop all services:    stop-all.bat"
+Write-Host "  - Stop frontend only:   stop-front.bat"
+Write-Host "  - Stop backend only:    stop-backend.bat"
+Write-Host "  - Health check:         check-health.bat"
 Write-Host ""
