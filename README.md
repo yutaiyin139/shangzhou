@@ -1,167 +1,166 @@
-# 熵舟·智能体工作台
+# 熵舟·智能体工作台（V1.0）
 
-前后端分离架构：**Vue3 + Vite** 前端（`front/`）与 **Flask** 后端（`backend/`），数据库使用 MySQL（库名 `szagent`）。
+前后端分离架构：**Vue 3 + Vite + Pinia + TypeScript** 前端（`front/`）与 **Flask + Flask-SocketIO + Celery** 后端（`backend/`）；数据持久化使用 **MySQL**（库名 `szagent`，须 `utf8mb4`），**Redis** 作 Celery broker/缓存，**Qdrant** 为可选向量库（缺失自动回退 MySQL 余弦检索）。
 
 ## 目录结构
 
 ```
 shangzhou/
-├── front/                      # 前端（Vue3 + Vite + vue-router）
-│   ├── package.json            # 前端依赖清单（编译依赖）
-│   ├── vite.config.js          # Vite 配置（端口 5173，/api 代理到后端 5000）
+├── front/                      # 前端（Vue3 + Vite + Pinia + TypeScript）
+│   ├── package.json            # 前端依赖清单
+│   ├── vite.config.ts          # Vite 配置（dev 端口 5173，/api 代理到后端 5000）
 │   ├── index.html              # 应用入口 HTML
-│   ├── public/                 # 静态资源（login-bg.png 等）
 │   ├── src/
-│   │   ├── main.js             # 应用入口
+│   │   ├── main.ts             # 应用入口
 │   │   ├── App.vue             # 根组件（router-view）
-│   │   ├── router/index.js     # 路由表（32 个页面）
-│   │   ├── styles/style.css    # 全局样式（迁移自 assets/style.css）
-│   │   ├── utils/global.js     # 公共工具（导航/图标/toast/模态框）
-│   │   ├── components/AppShell.vue  # 顶栏+侧栏公共外壳
-│   │   └── views/              # 32 个页面组件（LoginView/HomeView/...）
-│   └── convert_html_to_vue.py  # HTML→Vue 批量转换脚本（仅维护时使用）
+│   │   ├── router/index.ts     # 路由表（hash 模式，48 个视图）
+│   │   ├── locales/            # 中英文双语 i18n（t()/setLocale/locale）
+│   │   ├── components/         # 组件（AppShell + ui/ 统一组件库 + workflow/ 等）
+│   │   ├── stores/  api/  utils/  styles/
+│   │   └── views/              # 48 个页面组件（Login/Home/WorkflowStudio/Knowledge/...）
+│   └── dist/                   # 生产构建产物（由 Nginx 托管）
 ├── backend/                    # 后端（Flask）
-│   ├── app.py                  # Flask 应用入口（注册 CORS 与路由）
-│   ├── config.py               # 数据库配置（MySQL / Dify PostgreSQL）
-│   ├── routes/                 # 业务路由模块（account/agents/auth/chat/...）
+│   ├── app.py                  # Flask 应用入口（注册 CORS / 路由 / SocketIO）
+│   ├── config.py               # DB/Redis/密钥配置（自动加载项目根 .env）
+│   ├── routes/                 # 业务路由模块（34 文件 / 326 端点）
+│   ├── engine/                 # 工作流引擎（node_factory + nodes/ 节点包）
 │   ├── models/                 # 数据表结构、内置工具/技能/数据源定义
-│   ├── utils/                  # 工具函数（密码、LLM 调用、dify DB 操作等）
+│   ├── tasks/                  # Celery 任务（workflow/embedding/scheduled/backup）
+│   ├── utils/                  # 工具（auth/encryption/llm/vector_store/login_lockout/...）
 │   └── requirements.txt        # 后端依赖清单
-├── start-front.bat             # 前端一键启动脚本
-├── start-backend.bat           # 后端一键启动脚本
-├── start-all.bat               # 前后端同时启动脚本
-└── README.md
+├── scripts/
+│   ├── deploy-ubuntu.sh            # Ubuntu 目标机交互式一键部署
+│   ├── deploy-ubuntu-online.sh     # Ubuntu 服务端一键部署脚本（在线部署用）
+│   ├── deploy_ubuntu_online.py     # 跨网 SSH 部署驱动（从 Windows 编排）
+│   ├── szagent-ctl.sh              # Ubuntu 统一服务控制（start/stop/restart/status）
+│   ├── init_db.py / db_backup.py   # 建库 / 备份
+│   ├── test_deep_research_assistant.py  # 工作流端到端冒烟
+│   └── maintenance/                # 一次性运维脚本（reset_password/diagnose/迁移脚本）
+├── docs/                       # 文档（生产环境部署手册 / Dify 差距分析 / 工作流对比）
+├── Redis-8.10.1/               # 本地 Windows Redis（含 start.bat）
+├── qdrant/                     # 本地 Windows Qdrant
+├── .env                        # 运行配置（DB/Redis/JWT/ENCRYPTION_KEY；勿入库）
+└── start-*.bat / stop-*.bat / *-services.ps1   # Windows 一键启停脚本
 ```
 
-## 编译依赖
-
-### 前端（Node.js 18+）
-
-依赖声明在 `front/package.json`，首次使用执行：
-
-```bash
-cd front
-npm install
-```
-
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| vue | ^3.4 | 前端框架 |
-| vue-router | ^4.3 | 页面路由 |
-| vite | ^5.2 | 开发服务器/构建工具 |
-| @vitejs/plugin-vue | ^5.0 | Vue 单文件组件编译插件 |
-
-### 后端（Python 3.x）
-
-依赖声明在 `backend/requirements.txt`，首次使用执行：
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-| 依赖 | 用途 |
-|------|------|
-| Flask | Web 服务框架 |
-| Flask-Cors | 跨域支持 |
-| PyMySQL | MySQL 数据库连接 |
-
-数据库连接配置在 `backend/app.py` 的 `DB_CONFIG`（host `localhost:3306`，库名 `szagent`）。
-
-## 启动方法
-
-### 前置条件
+## 环境要求
 
 | 依赖 | 版本 | 说明 |
 |------|------|------|
-| Node.js + npm | 18+ | 前端编译/运行环境 |
-| Python | 3.x | 后端运行环境 |
-| MySQL | 5.7+ | 数据库服务需已启动，库名 `szagent`（连接配置在 `backend/app.py` 的 `DB_CONFIG`） |
+| Node.js + npm | 18+ | 前端编译/运行 |
+| Python | 3.10+（3.12/3.13 推荐） | 后端运行 |
+| MySQL | 8.0（utf8mb4） | 库名 `szagent` |
+| Redis | 7.x | Celery broker + 缓存 |
+| Qdrant | 可选 | 向量库；缺失回退 MySQL 检索 |
 
-> **首次运行先装依赖**：分别双击 `start-backend.bat`、`start-front.bat` 会自动安装；
-> 也可手动执行 `cd backend && pip install -r requirements.txt` 与 `cd front && npm install`。
+## 配置（`.env`）
 
-### 方式一：一键同时启动（推荐）
+数据库等配置**不再硬编码**：`backend/config.py` 启动时自动加载项目根 `.env`（systemd 亦通过 `EnvironmentFile` 注入）。关键变量：`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`、`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`、`JWT_SECRET`、`ENCRYPTION_KEY`（加密模型 API Key，启用后不可更换）。可从 `.env.example` 复制起步。
 
-双击 `start-all.bat`，脚本会弹出两个独立窗口：
+---
 
-- 「熵舟-后端(Flask:5000)」→ `http://localhost:5000`
-- 「熵舟-前端(Vite:5173)」→ `http://localhost:5173`
+## Windows 本地开发 / 联调
 
-然后浏览器访问 `http://localhost:5173` 即可（默认登录：admin / 000000）。
+### 首次安装依赖
 
-### 方式二：分别启动（双击脚本）
+```bash
+cd backend && pip install -r requirements.txt
+cd front   && npm install
+```
 
-1. 双击 `start-backend.bat` → 后端运行在 `http://localhost:5000`
-2. 双击 `start-front.bat` → 前端运行在 `http://localhost:5173`
-3. 浏览器访问 `http://localhost:5173`
+### 一键启动 / 停止
 
-两个脚本会自动检查并安装缺失依赖（node / python 未安装时会给出提示）。
+| 目的 | 命令 |
+|------|------|
+| 启动全部（Redis + Qdrant + 后端 + 前端 + Celery） | `start-all.bat` |
+| 停止全部 | `stop-all.bat` |
+| 仅启动后端 / 前端 / Worker | `start-backend.bat` / `start-front.bat` / `start-worker.bat` |
+| **仅停止前端（Vite :5173）** | `stop-front.bat`（传 `/auto` 免停顿） |
+| **仅停止后端（Flask :5000）** | `stop-backend.bat`（传 `/auto` 免停顿） |
+| 端口轮询式启停（推荐脚本化） | `start-services.ps1` / `stop-services.ps1` |
+| 健康检查 | `check-health.bat`（或 `check-health.bat --json`） |
 
-### 方式三：命令行手动启动
+访问 `http://localhost:5173`。前端 `/api` 由 Vite 代理到后端 5000，**须先启动后端**。
+
+### 命令行手动启动
 
 ```bash
 # 终端 1：后端
-cd backend
-pip install -r requirements.txt   # 仅首次
-python app.py
-
+cd backend && python app.py            # http://localhost:5000
 # 终端 2：前端
-cd front
-npm install        # 仅首次
-npm run dev
+cd front && npm run dev                # http://localhost:5173
+# 生产构建与预览
+cd front && npm run build && npm run preview   # 产物输出 front/dist/
 ```
 
-### 方式四：前端生产构建与预览
+---
+
+## 生产环境部署（Ubuntu）
+
+> 完整步骤见 **`docs/生产环境部署手册-V1.0.md`**。此处仅给命令入口。
+
+**方式 A · 目标机交互式**：`sudo bash scripts/deploy-ubuntu.sh`
+
+**方式 A-2 · 跨网 SSH 在线一键（实测 V1.0）**：从本机 Windows 上传后端 + 已构建 `dist` 并在目标机执行服务端脚本：
+
+```powershell
+$env:SZ_HOST="172.28.186.196"; $env:SZ_USER="yuty"; $env:SZ_PASS="****"
+$env:SZ_APP_DIR="/home/yuty/shangzhou"
+python scripts/deploy_ubuntu_online.py            # 上传 + 部署
+```
+
+### Ubuntu 服务统一控制（`scripts/szagent-ctl.sh`）
+
+分组：`front`=nginx；`backend`=szagent-backend/worker/beat；`infra`=redis-server/qdrant（qdrant 缺失自动跳过）；`all`=infra+backend+front。
 
 ```bash
-cd front
-npm run build      # 产物输出到 front/dist/
-npm run preview    # 本地预览构建产物（需后端保持运行）
+sudo bash scripts/szagent-ctl.sh start all      # 一键启动所有服务
+sudo bash scripts/szagent-ctl.sh stop  all      # 一键停止所有服务
+sudo bash scripts/szagent-ctl.sh start front    # 仅启动前端（nginx）
+sudo bash scripts/szagent-ctl.sh stop  front    # 仅停止前端
+sudo bash scripts/szagent-ctl.sh start backend  # 仅启动后端（gunicorn+Celery）
+sudo bash scripts/szagent-ctl.sh stop  backend  # 仅停止后端
+bash     scripts/szagent-ctl.sh status          # 状态总览（免 root）
 ```
 
-### 验证服务是否正常
+> 启动顺序 infra→backend→front，停止取逆序；`restart`/`help` 亦支持。
+
+---
+
+## 登录与账号
+
+- 后端启动时 `routes/auth.py:_init_default_admin()` 创建 `admin`/`user` 角色，并把 `admin` 角色授予账号名 **`yutaiyin`**。
+- **不存在统一默认口令**（历史上"admin / 000000"的说法已过时）：登录密码取自 `szagent` 库 `dify_accounts` 表（argon2id/PBKDF2 加盐哈希）。
+- 需重置密码：`python scripts/maintenance/reset_password.py`。
+- 新注册账号默认 `role=user`；注册开关/邀请码在系统设置中管控（后端 `/api/register` 强制读取）。
+
+## 验证服务是否正常
 
 ```bash
-# 端口监听检查（两个端口都应 LISTENING）
-netstat -ano | findstr ":5173 :5000"
-
-# 后端接口直测（应返回 JSON）
-curl http://localhost:5000/api/xxx
+curl -s http://localhost:5000/api/health          # 期望 status=healthy
+curl -I http://localhost                          # 生产经 Nginx，期望 200
 ```
 
-浏览器打开 `http://localhost:5173` 应显示登录页；输入 admin/000000 与验证码可登录。
+工作流端到端冒烟（依赖后端 + Redis + Worker）：
 
-### 停止服务
+```bash
+cd backend && PYTHONIOENCODING=utf-8 python ../scripts/test_deep_research_assistant.py
+#   期望 20 PASS / 0 FAIL（建库→向量化→澄清→检索→报告→发布→再问）
+```
 
-- 在对应服务窗口按 `Ctrl+C`，或直接关闭窗口；
-- 前端页面请求 `/api` 由 Vite 自动代理到后端 5000，**必须先启动后端**，否则页面数据请求会失败。
-
-### 常见问题
+## 常见问题
 
 | 现象 | 处理 |
 |------|------|
 | 双击脚本报「未找到 node / python」 | 安装对应环境并加入 PATH 后重试 |
-| 端口 5173/5000 被占用 | `netstat -ano | findstr :5173` 找到 PID 后结束该进程，或修改 `front/vite.config.js` / `backend/app.py` 端口 |
-| 页面数据加载失败（接口报错） | 确认后端窗口已启动、MySQL 服务已开启 |
-| 登录提示密码错误 | 账号密码来自 `szagent` 数据库 `dify_accounts` 表（可用 `backend/reset_password.py` 重置） |
-| 页面样式与原型不一致 | 历史 HTML 原型已从仓库移除；如需对照请查看 git 历史 `front/legacy/` |
-
-## 页面与路由对照
-
-原 HTML 页面已全部转换为 Vue 组件（`front/src/views/`，共 32 个页面），路由使用 hash 模式：
-
-| 原页面 | 路由 | 组件 |
-|--------|------|------|
-| login.html | `#/login` | LoginView.vue |
-| home.html | `#/home` | HomeView.vue |
-| models.html | `#/models` | ModelsView.vue |
-| ... | ... | ... |
-
-完整对照见 `front/src/router/index.ts`。历史 HTML 原型已移出仓库（可在 git 历史 `front/legacy/` 查阅）。
+| 端口 5173/5000 被占用 | `stop-backend.bat` / `stop-front.bat`，或 `netstat -ano \| findstr :5000` 找 PID 结束 |
+| 登录提示密码错误 | 用 `scripts/maintenance/reset_password.py` 重置；勿反复试（有失败锁定） |
+| `/api/health` = degraded | Redis 未运行 → Celery 不可达，启动 redis 并核对 `REDIS_PASSWORD` |
+| 知识库向量化一直 PENDING | Worker 未消费全部队列，需 `-Q celery,workflow,embedding,scheduled` |
+| 页面数据加载失败 | 确认后端已启动、MySQL 服务已开启 |
 
 ## 注意事项
 
-- 前端开发服务（5173）已将 `/api` 代理到后端（5000），页面内请求无需写完整地址
-- 登录账号使用 `szagent` 数据库中的用户（如 admin/000000）
-- 模型配置管理在「模型」页面，配置后可在「智能工作台」选择并对话
+- `.env` 含密钥，权限 600，**不入库、不入镜像**；`ENCRYPTION_KEY` 一旦启用不可更换（丢失将无法解密已存模型 API Key）。
+- 生产 `FLASK_DEBUG=0`；`JWT_SECRET`/DB 密码/Redis 密码使用强随机值。
+- 数据库须 `utf8mb4`：应用模板/图标含 emoji，utf8mb3 会写成 `?` 破坏 DSL YAML。
