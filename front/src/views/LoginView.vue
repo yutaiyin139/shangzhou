@@ -25,7 +25,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/></svg>
             </button>
           </div>
-          <div class="lp-captcha">
+          <div class="lp-captcha" v-if="captchaEnabled">
             <div class="lp-field">
               <svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7.5 3v5.5c0 4.7-3.2 8-7.5 9.5-4.3-1.5-7.5-4.8-7.5-9.5V6L12 3z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>
               <input id="login-captcha" type="text" placeholder="请输入图形验证码" autocomplete="off" maxlength="4" v-model="captchaInput">
@@ -89,6 +89,14 @@ const captchaInput = ref('')
 const errorMsg = ref('')
 const loading = ref(false)
 const oauthProviders = ref([])
+
+/* 登录图形验证码开关（与后端 LOGIN_LOCKOUT_ENABLED 同样由根目录 .env 控制）：
+ * - 项目根 .env 写 `VITE_LOGIN_CAPTCHA=false` 则关闭图形验证码（开发阶段）
+ * - 缺省（未设置或非 false）为启用，生产构建默认保留验证
+ * - 修改 .env 后需重启 dev 服务器 / 重新 build 才会生效
+ */
+const captchaEnabled = String(import.meta.env.VITE_LOGIN_CAPTCHA ?? 'true').trim().toLowerCase()
+  !== 'false'
 
 /* 加载 OAuth 提供商列表 */
 function loadOAuthProviders(){
@@ -197,9 +205,11 @@ async function doLogin(){
   errorMsg.value = '';
   if (!username.value.trim()){ shake(document.getElementById('login-user')); errorMsg.value = '请输入账号'; return; }
   if (!password.value.trim()){ shake(document.getElementById('login-pwd')); errorMsg.value = '请输入密码'; return; }
-  if (!captchaInput.value.trim()){ shake(document.getElementById('login-captcha')); errorMsg.value = '请输入图形验证码'; return; }
-  if (captchaInput.value.trim().toUpperCase() !== code.value){
-    shake(document.getElementById('login-captcha')); errorMsg.value = '验证码错误，请重新输入'; captchaInput.value = ''; drawCaptcha(); return;
+  if (captchaEnabled) {
+    if (!captchaInput.value.trim()){ shake(document.getElementById('login-captcha')); errorMsg.value = '请输入图形验证码'; return; }
+    if (captchaInput.value.trim().toUpperCase() !== code.value){
+      shake(document.getElementById('login-captcha')); errorMsg.value = '验证码错误，请重新输入'; captchaInput.value = ''; drawCaptcha(); return;
+    }
   }
   loading.value = true;
   try {
@@ -216,7 +226,7 @@ async function doLogin(){
 }
 
 onMounted(function(){
-  drawCaptcha();
+  if (captchaEnabled) drawCaptcha();
   drawQr();
   loadOAuthProviders();
   document.getElementById('pwd-eye').addEventListener('click', function(){

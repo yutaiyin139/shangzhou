@@ -34,11 +34,22 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 # 登录锁定开关：默认启用安全控制，仅在显式设置 LOGIN_LOCKOUT_ENABLED=false 时禁用
-# 生产环境必须保持启用！可通过环境变量 LOGIN_LOCKOUT_ENABLED=false 临时关闭（调试用）
+# 生产环境必须保持启用！开发/调试阶段可通过环境变量 LOGIN_LOCKOUT_ENABLED=false 临时关闭
 LOGIN_LOCKOUT_ENABLED = os.environ.get('LOGIN_LOCKOUT_ENABLED', 'true').lower() not in ('false', '0', 'no')
 
 # 兼容旧代码：TESTING_MODE 为 True 时禁用锁定（仅用于单元测试）
 TESTING_MODE = not LOGIN_LOCKOUT_ENABLED
+
+
+def _lockout_disabled():
+    """登录强锁定是否已停用。
+
+    调用时读取环境变量（而非仅依赖模块导入时的快照），避免 `.env` 加载晚于本模块
+    导入时开关失效。开发阶段置 `LOGIN_LOCKOUT_ENABLED=false` 可临时解除账号+IP
+    失败锁定；缺省（未设置）为启用，生产环境不得关闭。
+    """
+    return os.environ.get('LOGIN_LOCKOUT_ENABLED', 'true').strip().lower() in ('false', '0', 'no')
+
 
 # 用户名失败阈值 → 锁定时间（秒）
 USERNAME_LOCKOUT_THRESHOLDS = [
@@ -281,8 +292,8 @@ def record_login_failure(username='', ip=None):
         username: 用户名（可选）
         ip: IP 地址（可选，默认从 request 获取）
     """
-    # 测试模式：跳过失败记录
-    if TESTING_MODE:
+    # 开发阶段可停用锁定：跳过失败记录
+    if _lockout_disabled():
         return
 
     if not ip:
@@ -433,8 +444,8 @@ def lock_account(username='', ip=None):
     返回:
         dict: 锁定结果
     """
-    # 测试模式：跳过账号锁定
-    if TESTING_MODE:
+    # 开发阶段可停用锁定：跳过账号锁定
+    if _lockout_disabled():
         return {'username_locked': False, 'ip_locked': False}
 
     if not ip:
@@ -634,8 +645,8 @@ def check_login_allowed(username='', ip=None):
     返回:
         tuple: (allowed: bool, message: str)
     """
-    # 测试模式：跳过登录安全检查
-    if TESTING_MODE:
+    # 开发阶段可停用锁定：跳过登录安全检查
+    if _lockout_disabled():
         return True, ''
 
     # 先检查是否已被锁定
