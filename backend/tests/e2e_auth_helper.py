@@ -62,9 +62,11 @@ def _mint_access_token():
         cur = db.cursor()
         env_user = os.environ.get('SHANGZHOU_TEST_USERNAME')
         if env_user:
+            # 与登录主路径保持一致：账号名精确匹配优先于邮箱匹配，避免歧义命中
             cur.execute(
-                'SELECT id, name, email FROM dify_accounts WHERE name = %s OR email = %s LIMIT 1',
-                (env_user, env_user))
+                'SELECT id, name, email FROM dify_accounts '
+                'WHERE name = %s OR email = %s ORDER BY (name = %s) DESC LIMIT 1',
+                (env_user, env_user, env_user))
         else:
             # 优先取具备 admin 角色的账号，保证知识库等接口有完整权限语义
             cur.execute('''

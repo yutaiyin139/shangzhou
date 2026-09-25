@@ -971,13 +971,17 @@ def register_auth_routes(app):
             db = get_db()
             try:
                 cur = db.cursor()
+                # 允许用「账号名」或「邮箱」登录，但必须让账号名精确匹配优先：
+                # 否则当他人邮箱恰好等于某个账号名时（如 email='yutaiyin'），
+                # 无 ORDER BY 的 LIMIT 1 会随机命中另一行，导致“密码正确却 401”。
                 cur.execute(r'''
                     SELECT id, name, nickname, email, phone, password, password_salt, status,
                            interface_language, interface_theme, created_at
                     FROM dify_accounts
                     WHERE name = %s OR email = %s
+                    ORDER BY (name = %s) DESC
                     LIMIT 1
-                ''', (username, username))
+                ''', (username, username, username))
                 acc = cur.fetchone()
             finally:
                 db.close()
