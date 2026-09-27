@@ -79,6 +79,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { authFetch } from '../../api/client'
 import { toast } from '../../utils/global'
 
 const props = defineProps({
@@ -94,7 +95,7 @@ const diffResult = ref(null)
 
 async function load() {
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/versions')
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/versions')
     const res = await r.json()
     if (res.code === 200) versions.value = res.data || []
   } catch (e) {}
@@ -103,7 +104,7 @@ async function load() {
 async function restore(v) {
   restoring.value = v.version_number
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/versions/' + v.version_number + '/restore', {
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/versions/' + v.version_number + '/restore', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
@@ -153,7 +154,7 @@ function toggleSelect(vid) {
 async function runDiff() {
   if (selected.value.length !== 2) return
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/versions/diff', {
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/versions/diff', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ vid_a: selected.value[0], vid_b: selected.value[1] })

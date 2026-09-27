@@ -7,7 +7,8 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engine.workflow_runner import _node_variable_aggregator
+# 实现已拆到 engine/nodes/variable_aggregator.py
+from engine.nodes.variable_aggregator import _node_variable_aggregator
 
 
 def test_aggregator_object_output():

@@ -27,12 +27,16 @@ class Phase4ModelTestIdTest(unittest.TestCase):
         cls.app = flask_app_mod.app
         cls.app.config['TESTING'] = True
         cls.client = cls.app.test_client()
+        # 模型相关接口已加 @login_required，需要带 JWT 才能访问
+        import e2e_auth_helper
+        cls.auth_header = e2e_auth_helper.get_auth_header(verbose=True)
 
     def _get(self, url):
-        return self.client.get(url)
+        return self.client.get(url, headers=self.auth_header)
 
     def _post(self, url, data=None):
-        return self.client.post(url, json=data or {}, content_type='application/json')
+        return self.client.post(url, json=data or {}, content_type='application/json',
+                                headers=self.auth_header)
 
     def test_01_get_config_by_id(self):
         """GET /api/model-configs/<id> 返回脱敏配置"""

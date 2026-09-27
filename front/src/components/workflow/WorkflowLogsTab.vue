@@ -160,6 +160,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { authFetch } from '../../api/client'
 import { toast } from '../../utils/global'
 
 const props = defineProps({
@@ -227,7 +228,7 @@ async function loadRuns(page = 1) {
     let url = `/api/workflows/${encodeURIComponent(props.appId)}/runs?page=${page}&page_size=${pageSize.value}`
     if (statusFilter.value) url += `&status=${statusFilter.value}`
 
-    const r = await fetch(url)
+    const r = await authFetch(url)
     const res = await r.json()
     if (res.code === 200) {
       const data = res.data || {}
@@ -251,7 +252,7 @@ async function selectRun(run) {
   // 如果节点数据还未加载，获取详情
   if (!run.nodes || run.nodes.length === 0) {
     try {
-      const r = await fetch(`/api/workflows/${encodeURIComponent(props.appId)}/runs/${run.id}`)
+      const r = await authFetch(`/api/workflows/${encodeURIComponent(props.appId)}/runs/${run.id}`)
       const res = await r.json()
       if (res.code === 200 && res.data) {
         selectedRun.value = res.data

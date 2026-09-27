@@ -9,12 +9,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
 from unittest.mock import patch, MagicMock
-from engine.workflow_runner import (
+# agent 节点实现已从 workflow_runner 拆到 engine/nodes/agent.py，
+# LLM 调用现在由 engine/agent_strategies.py 的 BaseStrategy._call_llm 发出，打桩要打在那里
+from engine.nodes.agent import (
     _node_agent,
     _parse_agent_response,
     _execute_agent_tool,
     _build_tool_descriptions,
-    _call_llm,
     _tool_code,
     _tool_calculator,
 )
@@ -192,7 +193,7 @@ def test_execute_agent_tool_unsupported_type():
     print('[PASS] test_execute_agent_tool_unsupported_type')
 
 
-@patch('engine.workflow_runner._call_llm')
+@patch('engine.agent_strategies.BaseStrategy._call_llm')
 def test_node_agent_direct_answer(mock_llm):
     """测试 Agent 节点直接回答（无需工具）"""
     mock_llm.return_value = {
@@ -219,7 +220,7 @@ def test_node_agent_direct_answer(mock_llm):
     print('[PASS] test_node_agent_direct_answer')
 
 
-@patch('engine.workflow_runner._call_llm')
+@patch('engine.agent_strategies.BaseStrategy._call_llm')
 def test_node_agent_with_tool_call(mock_llm):
     """测试 Agent 节点调用工具"""
     # 第一次调用返回 Action，第二次返回 Final Answer
@@ -248,7 +249,7 @@ def test_node_agent_with_tool_call(mock_llm):
     print('[PASS] test_node_agent_with_tool_call')
 
 
-@patch('engine.workflow_runner._call_llm')
+@patch('engine.agent_strategies.BaseStrategy._call_llm')
 def test_node_agent_max_iterations(mock_llm):
     """测试 Agent 节点达到最大迭代次数"""
     # 每次都返回 Action，直到达到最大迭代次数
@@ -275,7 +276,7 @@ def test_node_agent_max_iterations(mock_llm):
     print('[PASS] test_node_agent_max_iterations')
 
 
-@patch('engine.workflow_runner._call_llm')
+@patch('engine.agent_strategies.BaseStrategy._call_llm')
 def test_node_agent_variable_replacement(mock_llm):
     """测试 Agent 节点变量替换"""
     mock_llm.return_value = {
@@ -300,7 +301,7 @@ def test_node_agent_variable_replacement(mock_llm):
     print('[PASS] test_node_agent_variable_replacement')
 
 
-@patch('engine.workflow_runner._call_llm')
+@patch('engine.agent_strategies.BaseStrategy._call_llm')
 def test_node_agent_json_response(mock_llm):
     """测试 Agent 节点 JSON 格式响应"""
     mock_llm.side_effect = [

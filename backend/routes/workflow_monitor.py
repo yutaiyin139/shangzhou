@@ -148,16 +148,21 @@ def get_trend():
             where_clause += " AND app_id = %s"
             params.append(app_id)
 
+        # 时间桶格式必须当**参数**传，不能拼进 SQL 字面量：
+        # pymysql 在 execute(query, args) 里会对 query 做一次 `%` 格式化，
+        # 而 _time_bucket 返回的是 '%Y-%m-%d %H:00' 这种带百分号的 MySQL 格式串，
+        # 拼进去就报 ValueError: unsupported format character 'Y' at index 33，
+        # 本接口一直 500（监控页的“执行趋势”永远空）。参数值里的 % 不会被二次格式化。
         cur.execute(
-            f"""SELECT DATE_FORMAT(created_at, '{bucket_fmt}') as bucket,
+            r'''SELECT DATE_FORMAT(created_at, %s) as bucket,
                        COUNT(*) as cnt,
                        SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as success,
                        SUM(CASE WHEN status IN ('failed', 'error') THEN 1 ELSE 0 END) as fail
                 FROM dify_workflow_runs
-                {where_clause}
+                ''' + where_clause + r'''
                 GROUP BY bucket
-                ORDER BY bucket ASC""",
-            params
+                ORDER BY bucket ASC''',
+            [bucket_fmt] + params
         )
 
         items = []

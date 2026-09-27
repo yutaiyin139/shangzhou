@@ -236,19 +236,43 @@
             <span>{{ installProvider.help_text }}</span>
             <a v-if="installProvider?.help_url" :href="installProvider.help_url" target="_blank" class="mp-help-link">获取 API Key ↗</a>
           </div>
+          <!-- 已保存凭据：从 /api/model-configs 读取，api_key 后端已脱敏 -->
+          <div v-if="savedConfigs.length" class="mp-saved-box">
+            <div class="mp-saved-head">
+              <span class="mp-saved-title">已保存的凭据（{{ savedConfigs.length }}）</span>
+              <button class="mp-btn mp-btn-text mp-btn-sm" @click="startNewConfig">+ 新建凭据</button>
+            </div>
+            <div class="mp-saved-list">
+              <div
+                v-for="c in savedConfigs"
+                :key="c.id"
+                class="mp-saved-row"
+                :class="{ active: editingConfigId === c.id }"
+                @click="fillFormFromConfig(c)"
+              >
+                <div class="mp-saved-main">
+                  <b>{{ c.credential_name || '(未命名凭据)' }}</b>
+                  <small>{{ c.model_name }} · {{ typeLabel(c.model_type) }} · Key {{ c.api_key || '未设置' }}</small>
+                  <small class="mp-saved-url">{{ c.api_base_url || '（未设置 Base URL）' }}</small>
+                </div>
+                <span v-if="editingConfigId === c.id" class="mp-saved-tag">当前编辑</span>
+              </div>
+            </div>
+            <div class="mp-saved-hint">出于安全考虑界面只展示脱敏后的 Key；重新填写即替换，留空表示保留原密钥。</div>
+          </div>
           <div class="mp-form-item">
             <label class="mp-form-label">凭据名称</label>
             <input v-model="installForm.credential_name" class="mp-form-input" placeholder="请输入凭据名称（如：我的 OpenAI 配置）" />
           </div>
           <div class="mp-form-item">
-            <label class="mp-form-label">API Key <span class="mp-req">*</span></label>
+            <label class="mp-form-label">API Key <span v-if="!editingConfigId" class="mp-req">*</span></label>
             <div class="mp-input-group">
               <input
                 v-model="installForm.api_key"
                 :type="showApiKey ? 'text' : 'password'"
                 class="mp-form-input"
                 :class="{ error: installErrors.api_key }"
-                placeholder="在此输入您的 API Key"
+                :placeholder="editingConfigId ? '已保存，留空表示不修改' : '在此输入您的 API Key'"
                 @input="installErrors.api_key = ''"
               />
               <button class="mp-input-toggle" @click="showApiKey = !showApiKey">{{ showApiKey ? '🙈' : '👁' }}</button>
@@ -261,13 +285,28 @@
             <div class="mp-form-hint">默认: {{ installProvider?.default_base_url || '无' }}</div>
           </div>
           <div class="mp-form-item">
-            <label class="mp-form-label">模型名称 <span class="mp-req">*</span></label>
+            <div class="mp-form-label-row">
+              <label class="mp-form-label">模型名称 <span class="mp-req">*</span></label>
+              <button class="mp-btn mp-btn-text mp-btn-sm" :disabled="loadingLiveModels" @click="fetchLiveModels">
+                <span v-if="loadingLiveModels">⏳ 拉取中...</span>
+                <span v-else>🔄 拉取该 Key 真实可用模型</span>
+              </button>
+            </div>
             <select v-model="installForm.model_name" class="mp-form-input" @change="onModelSelect">
               <option value="">请选择模型</option>
+              <!-- 已保存的模型可能不在预置 model_definitions 里（如 qwen3.7-max），
+                   不补这个选项下拉会把当前值显示成空白，看起来像“没配” -->
+              <option
+                v-if="installForm.model_name && !installModels.some(m => m.model_name === installForm.model_name)"
+                :value="installForm.model_name"
+              >
+                {{ installForm.model_label || installForm.model_name }} ({{ installForm.model_name }}) — 当前已保存
+              </option>
               <option v-for="m in installModels" :key="m.model_name" :value="m.model_name">
                 {{ m.model_label }} ({{ m.model_name }})
               </option>
             </select>
+            <div class="mp-form-hint">{{ modelSourceHint }}</div>
             <div v-if="installErrors.model_name" class="mp-form-error">{{ installErrors.model_name }}</div>
           </div>
           <div class="mp-form-section">
@@ -358,7 +397,7 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import { toast } from '../utils/global'
-import { apiGet, apiPost } from '../api/client'
+import { apiGet, apiPost, apiPut } from '../api/client'
 
 // ========== 状态 ==========
 const allProviders = ref([])
@@ -379,6 +418,16 @@ const testLoading = ref(false)
 const testResult = ref(null)
 const testLoadingId = ref(null)
 const testResults = ref({})
+const savedConfigs = ref([])
+const editingConfigId = ref(null)
+const loadingLiveModels = ref(false)
+const liveModels = ref([])
+
+const modelSourceHint = computed(() => {
+  if (liveModels.value.length > 0) return `来自服务商实际授权：共 ${liveModels.value.length} 个模型`
+  if (installModels.value.length > 0) return `预置模型库 ${installModels.value.length} 个，可能与该 Key 实际授权不一致（可拉取真实列表）`
+  return '暂无可选模型，可拉取该 Key 真实可用的模型列表'
+})
 
 const installForm = reactive({
   credential_name: '',
@@ -471,24 +520,37 @@ async function openProviderDetail(p) {
       detailProvider.value = data.data
       detailModels.value = data.data.models || []
     }
-  } catch (e) { console.error('加载供应商详情失败', e) }
+  } catch (e) {
+    console.error('加载供应商详情失败', e)
+    toast('供应商详情加载失败：' + (e.message || e))
+  }
 }
 
 function openInstalledDetail(p) {
   const provider = allProviders.value.find(x => x.provider_name === p.provider_name)
-  if (provider) openProviderDetail(provider)
+  if (provider) { openProviderDetail(provider); return }
+  /* 目录里查不到该供应商（历史/手工配置出来的孤儿 provider）时绝不能静默无反应，
+     先用已安装卡片自身数据兜底打开，详情接口会按已有凭据合成目录元数据 */
+  openProviderDetail({
+    provider_name: p.provider_name,
+    provider_label: p.provider_label || p.provider_name,
+    icon: p.icon,
+    icon_background: p.icon_background,
+    is_installed: true,
+  })
 }
 
-function openInstallModal(p) {
-  installProvider.value = p
+function resetInstallForm(p) {
   testResult.value = null
   showApiKey.value = false
   showParams.value = false
   showCaps.value = false
+  liveModels.value = []
+  editingConfigId.value = null
   Object.assign(installForm, {
-    credential_name: p.provider_label + ' - ' + new Date().toLocaleDateString('zh-CN'),
+    credential_name: ((p && (p.provider_label || p.provider_name)) || '') + ' - ' + new Date().toLocaleDateString('zh-CN'),
     api_key: '',
-    api_base_url: p.default_base_url || '',
+    api_base_url: (p && p.default_base_url) || '',
     model_name: '',
     model_label: '',
     model_type: 'llm',
@@ -504,15 +566,101 @@ function openInstallModal(p) {
   })
   installErrors.api_key = ''
   installErrors.model_name = ''
+}
+
+function openInstallModal(p) {
+  installProvider.value = p
+  savedConfigs.value = []
+  resetInstallForm(p)
   showInstall.value = true
   loadInstallModels(p)
+  loadSavedConfigs(p.provider_name)
+}
+
+/** 列出该 provider 已保存的凭据（api_key 后端已脱敏），并默认展示最新一条的内容 */
+async function loadSavedConfigs(providerName) {
+  if (!providerName) return
+  try {
+    const data = await apiGet(`/api/model-configs?provider=${encodeURIComponent(providerName)}`)
+    if (data.code === 200) {
+      savedConfigs.value = data.data || []
+      if (savedConfigs.value.length > 0) fillFormFromConfig(savedConfigs.value[0])
+    }
+  } catch (e) {
+    console.error('加载已保存凭据失败', e)
+    toast('已保存凭据加载失败：' + errText(e, '网络异常'))
+  }
+}
+
+function fillFormFromConfig(c) {
+  editingConfigId.value = c.id
+  const num = (v, dft) => (v === null || v === undefined || v === '' ? dft : Number(v))
+  Object.assign(installForm, {
+    credential_name: c.credential_name || '',
+    api_key: '',                     // 明文密钥不下发到前端，避免多一道无鉴权接口暴露密钥
+    api_base_url: c.api_base_url || '',
+    model_name: c.model_name || '',
+    model_label: c.model_label || c.model_name || '',
+    model_type: c.model_type || 'llm',
+    temperature: num(c.temperature, 0.7),
+    max_tokens: num(c.max_tokens, 2048),
+    top_p: num(c.top_p, 1.0),
+    presence_penalty: num(c.presence_penalty, 0),
+    frequency_penalty: num(c.frequency_penalty, 0),
+    context_size: num(c.context_size, 4096),
+    supports_vision: !!num(c.supports_vision, 0),
+    supports_function_calling: !!num(c.supports_function_calling, 0),
+    supports_streaming: !!num(c.supports_streaming, 1),
+  })
+  installErrors.api_key = ''
+  testResult.value = null
+}
+
+function startNewConfig() {
+  resetInstallForm(installProvider.value)
+  installModels.value = []
+  loadInstallModels(installProvider.value)
+}
+
+/** 用已存凭据拉服务商真实授权的模型列表，覆盖预置 model_definitions */
+async function fetchLiveModels() {
+  if (!editingConfigId.value) {
+    toast('请先保存凭据，再拉取该 Key 真实可用的模型')
+    return
+  }
+  loadingLiveModels.value = true
+  try {
+    const data = await apiGet(`/api/model-configs/${editingConfigId.value}/live-models`)
+    if (data.code === 200) {
+      liveModels.value = (data.data.models || []).map(m => ({
+        model_name: m.model_name,
+        model_label: m.model_label || m.model_name,
+        model_type: installForm.model_type,
+        context_size: null,
+        max_output_tokens: null,
+        supports_vision: false,
+        supports_function_calling: false,
+        supports_streaming: true,
+      }))
+      installModels.value = liveModels.value
+      toast(`已载入 ${liveModels.value.length} 个真实可用模型`)
+    }
+  } catch (e) {
+    toast('拉取失败：' + errText(e, '网络异常'))
+  } finally {
+    loadingLiveModels.value = false
+  }
 }
 
 async function loadInstallModels(p) {
   try {
     const data = await apiGet(`/api/model-providers/${p.provider_name}`)
     if (data.code === 200) {
-      installModels.value = (data.data.models || []).filter(m => m.model_type === 'llm')
+      const models = data.data.models || []
+      /* 不能只认 llm：embedding/rerank/tts 供应商被硬过滤后模型下拉会空掉，
+         导致根本无法添加凭据；没有同类型模型时退回展示全部模型（下方会按选中项纠正 model_type）*/
+      const typed = models.filter(m => m.model_type === installForm.model_type)
+      installModels.value = typed.length > 0 ? typed : models
       if (installModels.value.length > 0 && !installForm.model_name) {
         const first = installModels.value[0]
         installForm.model_name = first.model_name
@@ -541,7 +689,33 @@ function onModelSelect() {
   }
 }
 
+/**
+ * 取出可展示的错误文案。后端把真实原因（如上游 401 invalid_api_key）放在 code!=200 的
+ * msg 里，client.ts 会把它 throw 出来；不能再无条件拼“网络异常:”，否则密钥错误、
+ * 域名不存在这类问题全部被归因成网络故障。真断网时 message 才是 Failed to fetch。
+ */
+function errText(e, fallback) {
+  const m = (e && e.message) ? String(e.message) : ''
+  if (!m || /Failed to fetch|NetworkError|Network Request Failed|Load failed/i.test(m)) return fallback
+  return m
+}
+
 async function testConnection() {
+  /* 编辑已存凭据且未重填 Key：走 by-id 测试，用库里已存的密钥，
+     否则会报“API Key 为必填项” */
+  if (editingConfigId.value && !installForm.api_key.trim()) {
+    testLoading.value = true
+    testResult.value = null
+    try {
+      const data = await apiPost(`/api/model-configs/${editingConfigId.value}/test`)
+      testResult.value = data.data || data
+    } catch (e) {
+      testResult.value = { success: false, msg: errText(e, '网络异常，请检查连接后重试') }
+    } finally {
+      testLoading.value = false
+    }
+    return
+  }
   if (!installForm.api_key) {
     installErrors.api_key = '请输入 API Key'
     return
@@ -558,7 +732,7 @@ async function testConnection() {
     })
     testResult.value = data.data || data
   } catch (e) {
-    testResult.value = { success: false, msg: '网络异常: ' + e.message }
+    testResult.value = { success: false, msg: errText(e, '网络异常，请检查连接后重试') }
   } finally {
     testLoading.value = false
   }
@@ -578,7 +752,7 @@ async function testById(configId, providerName) {
       testResults.value[providerName] = { success: false, msg: '测试返回数据为空' }
     }
   } catch (e) {
-    testResults.value[providerName] = { success: false, msg: '网络异常: ' + (e.message || e) }
+    testResults.value[providerName] = { success: false, msg: errText(e, '网络异常，请检查连接后重试') }
   } finally {
     testLoadingId.value = null
   }
@@ -586,7 +760,8 @@ async function testById(configId, providerName) {
 
 async function submitInstall() {
   let ok = true
-  if (!installForm.api_key.trim()) {
+  // 编辑已存凭据时留空 = 保留原密钥，所以只有新建才强制要求填 Key
+  if (!installForm.api_key.trim() && !editingConfigId.value) {
     installErrors.api_key = '请输入 API Key'
     ok = false
   }
@@ -598,16 +773,23 @@ async function submitInstall() {
 
   installLoading.value = true
   try {
-    const data = await apiPost(`/api/model-providers/${installProvider.value.provider_name}/install`, { ...installForm })
+    let data
+    if (editingConfigId.value) {
+      const payload = { ...installForm }
+      if (!payload.api_key) delete payload.api_key
+      data = await apiPut(`/api/model-configs/${editingConfigId.value}`, payload)
+    } else {
+      data = await apiPost(`/api/model-providers/${installProvider.value.provider_name}/install`, { ...installForm })
+    }
     if (data.code === 200) {
-      toast('安装成功')
+      toast(editingConfigId.value ? '配置已更新' : '安装成功')
       showInstall.value = false
       await Promise.all([loadInstalled(), loadProviders()])
     } else {
-      toast(data.msg || '安装失败')
+      toast(data.msg || '保存失败')
     }
   } catch (e) {
-    toast('网络异常: ' + e.message)
+    toast(errText(e, '网络异常，保存失败'))
   } finally {
     installLoading.value = false
   }
@@ -801,6 +983,32 @@ onMounted(() => {
 }
 .mp-help-icon { font-size: 16px; }
 .mp-help-link { color: var(--primary); margin-left: auto; white-space: nowrap; }
+
+/* 已保存凭据列表 */
+.mp-saved-box {
+  border: 1px solid var(--border-light); border-radius: 8px;
+  padding: 10px 12px 12px; margin-bottom: 18px; background: #fafbfc;
+}
+.mp-saved-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.mp-saved-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.mp-saved-list { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; }
+.mp-saved-row {
+  display: flex; align-items: center; gap: 10px;
+  background: #fff; border: 1px solid var(--border-light); border-radius: 6px;
+  padding: 8px 10px; cursor: pointer;
+}
+.mp-saved-row:hover { border-color: var(--primary); }
+.mp-saved-row.active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--blue-bg, #e6f4ff); }
+.mp-saved-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mp-saved-main b { font-size: 13px; color: var(--text-1); }
+.mp-saved-main small { font-size: 12px; color: var(--text-3); }
+.mp-saved-url { font-family: monospace; word-break: break-all; }
+.mp-saved-tag {
+  margin-left: auto; flex-shrink: 0; font-size: 11px; color: var(--primary);
+  background: var(--blue-bg, #e6f4ff); border-radius: 4px; padding: 2px 6px;
+}
+.mp-saved-hint { font-size: 12px; color: var(--text-3); margin-top: 8px; }
+.mp-form-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
 /* 详情区块 */
 .mp-detail-section { margin-bottom: 20px; }

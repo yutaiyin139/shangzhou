@@ -7,9 +7,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engine.workflow_runner import (
-    _node_document_extractor,
-    _node_template_transform,
+# 节点实现已从 workflow_runner 拆分到 engine/nodes/*，测试的 import 要跟着指
+from engine.nodes.document_extractor import _node_document_extractor
+from engine.nodes.template_transform import _node_template_transform
+from engine.nodes.list_operator import (
     _node_list_operator,
     _apply_filter,
     _apply_sort,

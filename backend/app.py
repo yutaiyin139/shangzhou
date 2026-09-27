@@ -21,6 +21,11 @@ CORS(app)
 # 注册所有业务路由
 register_all_routes(app)
 
+# 全局 API 鉴权闸门：默认全拦 + 显式公开白名单（模式由根目录 .env 的 REQUIRE_LOGIN_FOR_API 控制）。
+# 位置必须在 register_all_routes 之后：路由模块 import config 时才把根目录 .env 载入环境。
+from utils.api_guard import install_api_guard
+install_api_guard(app)
+
 # ============================================================
 # WebSocket 初始化（可选，需要 flask-socketio）
 # ============================================================
@@ -81,7 +86,9 @@ def health_check():
     health = {
         'status': 'running',
         'timestamp': datetime.now().isoformat(),
-        'version': '2.0.0',
+        # 跟产品定版一致（README 与 front/package.json 都是 1.0.0）；以前这里写死 2.0.0，
+        # 运维拿 /api/health 一看会以为跑的是下一个大版本。
+        'version': os.environ.get('APP_VERSION', '1.0.0'),
         'services': {}
     }
     all_ok = True
@@ -167,6 +174,9 @@ def health_check():
 @app.route('/api/ping', methods=['GET'])
 def ping():
     """轻量级存活探针（用于负载均衡器）"""
+    # datetime 在模块顶层并未导入（只在本文件其他函数内局部导入），
+    # 以前这个探针一调用就 NameError 500，而健康检查用的是 /api/health，所以一直没被发现
+    from datetime import datetime
     return jsonify(code=200, msg='pong', timestamp=datetime.now().isoformat())
 
 

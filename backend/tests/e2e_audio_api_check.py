@@ -46,6 +46,11 @@ class AudioServiceAPIBaseTest(unittest.TestCase):
             cls.api_token = 'test-token'
         db.close()
 
+        # /api/model-configs/* 已加 @login_required：Service API 的 AppKey 不是 JWT，
+        # 这类控制台接口需另外取访问令牌
+        import e2e_auth_helper
+        cls.jwt_header = e2e_auth_helper.get_auth_header()
+
     def _post(self, url, data=None, content_type='application/json', files=None):
         headers = {}
         if self.api_token:
@@ -55,6 +60,11 @@ class AudioServiceAPIBaseTest(unittest.TestCase):
                                    headers=headers)
         return self.client.post(url, json=data or {}, content_type=content_type,
                                headers=headers)
+
+    def _post_jwt(self, url, data=None):
+        """用 JWT 访问控制台接口（而非 Service API 的 AppKey）"""
+        return self.client.post(url, json=data or {}, content_type='application/json',
+                                headers=self.jwt_header)
 
     def _post_multipart(self, url, data=None, file_field=None):
         """发送 multipart/form-data 请求"""
@@ -171,7 +181,7 @@ class TestAudioConnectionTest(AudioServiceAPIBaseTest):
     def test_01_tts_test_endpoint_exists(self):
         """TTS 连接测试端点存在"""
         # 测试 body-based 端点能处理 tts 类型
-        resp = self._post('/api/model-configs/test', data={
+        resp = self._post_jwt('/api/model-configs/test', data={
             'provider': 'openai_tts',
             'api_key': 'sk-test-fake-key',
             'api_base_url': 'https://api.openai.com',
@@ -183,7 +193,7 @@ class TestAudioConnectionTest(AudioServiceAPIBaseTest):
 
     def test_02_stt_test_endpoint_exists(self):
         """STT 连接测试端点存在"""
-        resp = self._post('/api/model-configs/test', data={
+        resp = self._post_jwt('/api/model-configs/test', data={
             'provider': 'openai_stt',
             'api_key': 'sk-test-fake-key',
             'api_base_url': 'https://api.openai.com',

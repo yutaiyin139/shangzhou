@@ -6,7 +6,7 @@ import json
 import re
 from config import get_db
 from utils.helpers import now, _gen_appkey, _gen_web_token, _safe_uid
-from utils.llm import _call_llm
+from utils.llm import _call_llm_with_config, resolve_model_config
 from models.tables import AGENTS_TABLE_SQL, AGENT_SKILL_BINDINGS_TABLE_SQL, AGENT_CONFIG_REVISIONS_TABLE_SQL
 
 
@@ -27,12 +27,19 @@ def _ensure_agents_table():
         # 兼容旧表：补 owner 列
         cur.execute(r"SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'agents' AND column_name = 'owner'")
         if cur.fetchone()['n'] == 0:
-            cur.execute(r'ALTER TABLE agents ADD COLUMN owner INT DEFAULT 1')
-        cur.execute(r'UPDATE agents SET owner = 1 WHERE owner IS NULL')
+            cur.execute(r"ALTER TABLE agents ADD COLUMN owner VARCHAR(36) NOT NULL DEFAULT ''")
+        # 不再把 NULL 伪造成 owner = 1：那是已删除的旧 users.id，对不上任何账号。
+        # 历史数据的归属回填由 scripts/maintenance/migrate_agent_owner.py 完成。
         # 确保技能绑定表存在
         cur.execute(AGENT_SKILL_BINDINGS_TABLE_SQL)
         # 确保配置版本表存在
         cur.execute(AGENT_CONFIG_REVISIONS_TABLE_SQL)
+        # 兼容旧表：created_by 曾经也是 INT DEFAULT 1（存的是已删除的旧 users.id），
+        # 写 UUID 会被 MySQL 静默截成 0，让每一次配置快照都变成“谁都不是”改的
+        cur.execute(r"SELECT COLUMN_TYPE FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'agent_config_revisions' AND column_name = 'created_by'")
+        _col = cur.fetchone()
+        if _col and 'int' in str(_col['COLUMN_TYPE']).lower():
+            cur.execute(r'ALTER TABLE agent_config_revisions MODIFY COLUMN created_by VARCHAR(36) DEFAULT NULL')
         db.commit()
     finally:
         db.close()
@@ -65,6 +72,23 @@ def _save_agent_config(aid, config, atype):
         db.commit()
     finally:
         db.close()
+
+
+def _agent_llm_call(cfg, system_prompt, message):
+    """用智能体自己绑定的模型对话。
+
+    以前直接调 `_call_llm` 会取“全局最近更新的一条启用配置”，导致在模型页面
+    点一次“测试”就会把所有智能体的对话静默切换到另一个模型（并因 temperature
+    不兼容而整体失败）。现在按 config.model 解析；解析不到才回退到启用配置。
+    """
+    cfg = cfg or {}
+    model_cfg = resolve_model_config(cfg.get('model') or '', cfg.get('provider') or '')
+    temp = cfg.get('temperature')
+    try:
+        temp = float(temp) if temp not in (None, '') else None
+    except (TypeError, ValueError):
+        temp = None
+    return _call_llm_with_config(system_prompt, message, model_cfg, temperature=temp)
 
 
 def _default_access_points():
@@ -287,9 +311,9 @@ def register_agent_routes(app):
 
     @app.route('/api/agents', methods=['GET'])
     def get_agents():
-        """单智能体应用列表"""
+        """单智能体应用列表（只看本人创建的）"""
         _ensure_agents_table()
-        uid = _safe_uid(request.args.get('uid'))
+        uid = _safe_uid(None)
         db = get_db()
         try:
             cur = db.cursor()
@@ -308,11 +332,12 @@ def register_agent_routes(app):
     def get_accessible_agents():
         """当前用户有权访问的单智能体列表"""
         _ensure_agents_table()
-        uid = _safe_uid(request.args.get('uid'))
+        uid = _safe_uid(None)
         db = get_db()
         try:
             cur = db.cursor()
-            # 直接查询，不 JOIN 用户表（owner 为 int，dify_accounts.id 为 UUID，无法关联）
+            # 不 JOIN 用户表：owner 已统一为 dify_accounts.id（同为 UUID），直接比对即可；
+            # 展示层只需区分“本人/其他成员”，拿不到也不需要拿到具体人名
             cur.execute(r"""
                 SELECT a.id, a.name, a.role, a.description, a.icon, a.status, a.owner,
                        a.created_at, a.updated_at
@@ -327,7 +352,7 @@ def register_agent_routes(app):
                 if r['updated_at']:
                     r['updated_at'] = r['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
                 r['is_mine'] = (r['owner'] == uid)
-                r['owner_name'] = '用户' + str(r['owner'])  # 简化显示
+                r['owner_name'] = '本人' if r['is_mine'] else '其他成员'  # owner 已是账号 UUID，不能再拼原值
             return jsonify(code=200, data=rows)
         finally:
             db.close()
@@ -361,7 +386,11 @@ def register_agent_routes(app):
         name = d.get('name', '').strip()
         if not name:
             return jsonify(code=400, msg='请输入应用名称')
-        uid = _safe_uid(d.get('uid'))
+        uid = _safe_uid(None)
+        if not uid:
+            # 没有登录态就不要落库：owner='' 的智能体对所有账号都不可见，
+            # 又不报错，是最难查的一种脏数据（旧 CURRENT_USER_ID=1 就是这么造出无主行的）
+            return jsonify(code=401, msg='请先登录再创建智能体')
         db = get_db()
         try:
             cur = db.cursor()
@@ -414,7 +443,9 @@ def register_agent_routes(app):
                 try:
                     from engine.agent_strategies import ConfigRevisionManager
                     strategy = (config.get('strategy') or 'react') if isinstance(config, dict) else 'react'
-                    ConfigRevisionManager.save_revision(aid, config, strategy, change_note='配置更新自动保存')
+                    ConfigRevisionManager.save_revision(aid, config, strategy,
+                                                        change_note='配置更新自动保存',
+                                                        created_by=_safe_uid(None))
                 except Exception:
                     pass
 
@@ -592,7 +623,7 @@ def register_agent_routes(app):
                 pass
         system_prompt = _agent_system_prompt(hit['id'], hit['config'], message,
                                              conversation_id=conversation_id)
-        content, err = _call_llm(system_prompt, message)
+        content, err = _agent_llm_call(hit['config'], system_prompt, message)
         if err:
             return jsonify(code=500, msg=err)
         return jsonify(code=200, data={'reply': content})
@@ -629,7 +660,7 @@ def register_agent_routes(app):
                 pass
         system_prompt = _agent_system_prompt(aid, cfg, message,
                                              conversation_id=conversation_id)
-        content, err = _call_llm(system_prompt, message)
+        content, err = _agent_llm_call(cfg, system_prompt, message)
         if err:
             return jsonify(code=500, msg=err)
         return jsonify(code=200, data={'reply': content})
@@ -644,7 +675,7 @@ def register_agent_routes(app):
         cfg = _load_agent_config(aid, 'single')
         if cfg is None:
             return jsonify(code=404, msg='智能体不存在')
-        content, err = _call_llm(_agent_system_prompt(aid, cfg), message)
+        content, err = _agent_llm_call(cfg, _agent_system_prompt(aid, cfg), message)
         if err:
             return jsonify(code=500, msg=err)
         return jsonify(code=200, data={'reply': content})
@@ -680,7 +711,15 @@ def register_agent_routes(app):
 
     @app.route('/api/agents/<int:aid>/skills', methods=['GET'])
     def get_agent_skills(aid):
-        """获取智能体已绑定的技能列表"""
+        """获取智能体已绑定的技能列表。
+
+        历史成因：技能有两条写入通道。配置页“保存配置”写 agents.config.skills
+        （结构只有 icon/name，没 key），而技能选择器写 agent_skill_bindings 表。只读绑定表
+        就会让“已配好的技能”在刷新后变成“暂无 Skill”（看起来像数据丢了）。
+        这里只在绑定表为空时用 config.skills 兜底；不做并集，因为绑定表变动时
+        config.skills 不会被同步清理，取并集会把用户已删的技能复活。
+        真正的收敛是只剩一条通道（写入时两边一起写），已列入待办。
+        """
         _ensure_agents_table()
         db = get_db()
         try:
@@ -695,9 +734,48 @@ def register_agent_routes(app):
             for r in rows:
                 if r.get('created_at'):
                     r['created_at'] = r['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if not rows:
+                rows = _skills_from_agent_config(cur, aid)
             return jsonify(code=200, data=rows)
         finally:
             db.close()
+
+    def _skills_from_agent_config(cur, aid):
+        """把 config.skills （只有 icon/name）映射成绑定表同款结构，名称能对上就还原 key。"""
+        cur.execute(r'SELECT config FROM agents WHERE id = %s', (aid,))
+        raw = (cur.fetchone() or {}).get('config')
+        if not raw:
+            return []
+        try:
+            cfg = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except Exception:
+            return []
+        legacy = cfg.get('skills') or []
+        if not legacy:
+            return []
+        try:
+            from models.builtin_skills import BUILTIN_SKILLS
+            by_name = {(s.get('name') or '').strip(): s for s in BUILTIN_SKILLS}
+        except Exception:
+            by_name = {}
+        out = []
+        for item in legacy:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get('name') or item.get('skill_name') or '').strip()
+            if not name:
+                continue
+            hit = by_name.get(name)
+            out.append({
+                'id': None,
+                'agent_id': aid,
+                'skill_key': (hit or {}).get('key') or name,
+                'skill_name': name,
+                'skill_icon': item.get('icon') or (hit or {}).get('icon') or '✨',
+                'skill_kind': 'builtin' if hit else 'custom',
+                'created_at': '',
+            })
+        return out
 
     @app.route('/api/agents/<int:aid>/skills', methods=['POST'])
     def bind_agent_skill(aid):
@@ -793,7 +871,8 @@ def register_agent_routes(app):
 
         try:
             from engine.agent_strategies import ConfigRevisionManager
-            revision_id = ConfigRevisionManager.save_revision(aid, config, strategy, change_note)
+            revision_id = ConfigRevisionManager.save_revision(aid, config, strategy, change_note,
+                                                              created_by=_safe_uid(None))
             return jsonify(code=200, msg='已保存版本', data={'revision_id': revision_id})
         except Exception as e:
             return jsonify(code=500, msg=str(e))

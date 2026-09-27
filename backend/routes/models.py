@@ -19,6 +19,7 @@ import requests as http_requests
 from flask import jsonify, request, Response
 
 from config import get_db
+from utils.auth import login_required, role_required
 from utils.helpers import now
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,90 @@ def _ensure_tables():
         db.close()
 
 
+def _sync_orphan_providers():
+    """把“已在用但目录未登记”的供应商反向补录到目录表与模型定义表。
+
+    早期直接写 model_configs（或 seed 脚本没同步目录表）会留下 loong、tongyi_embedding
+    这类孤儿 provider：顶部“已配置模型”卡片能显示出，但 /api/model-providers 目录里没有
+    对应行，导致：
+      1. 前端 openInstalledDetail() 查不到目录项 → 点击完全没反应；
+      2. /api/model-providers/<name> 返回 404 → 详情进不去；
+      3. install 接口 return 404 “供应商不存在” → 无法再加凭据。
+    这里只根据其已有凭据补齐元数据（不碰 api_key），保证目录 ⊇ 在用 provider。
+
+    返回: int — 补录的供应商数量
+    """
+    db = get_db()
+    try:
+        cur = db.cursor()
+        cur.execute(r'''
+            SELECT c.provider, c.provider_label, c.model_name, c.model_label, c.model_type,
+                   c.api_base_url, c.context_size, c.max_tokens,
+                   c.supports_vision, c.supports_function_calling, c.supports_streaming
+            FROM model_configs c
+            WHERE c.status = 1 AND c.provider <> ''
+              AND NOT EXISTS (SELECT 1 FROM model_provider_configs p WHERE p.provider_name = c.provider)
+            ORDER BY c.provider ASC, c.updated_at DESC, c.id DESC
+        ''')
+        rows = cur.fetchall()
+        grouped = {}
+        for r in rows:
+            name = r['provider']
+            # provider_name 列宽 100，超长的是异常数据，不自动补录
+            if len(name) > 100:
+                logger.warning('provider 名称过长，跳过目录补录: %s', name[:40])
+                continue
+            g = grouped.setdefault(name, {
+                'label': r['provider_label'] or name,
+                'base_url': (r['api_base_url'] or '').rstrip('/'),
+                'types': [], 'models': [],
+            })
+            if not g['base_url'] and r['api_base_url']:
+                g['base_url'] = r['api_base_url'].rstrip('/')
+            mtype = r['model_type'] or 'llm'
+            if mtype not in g['types']:
+                g['types'].append(mtype)
+            mname = (r['model_name'] or '')[:100]
+            if mname and mname not in [m[0] for m in g['models']]:
+                g['models'].append((mname, (r['model_label'] or mname)[:100], mtype,
+                                    r['context_size'] or 4096, r['max_tokens'] or 2048,
+                                    r['supports_vision'] or 0, r['supports_function_calling'] or 0,
+                                    1 if r['supports_streaming'] in (None, 1, True) else 0))
+
+        for name, g in grouped.items():
+            cur.execute(r'''INSERT INTO model_provider_configs
+                    (provider_name, provider_label, description, icon, icon_background,
+                     credential_type, default_base_url, supported_model_types, help_text,
+                     is_built_in, status, created_at, updated_at)
+                    VALUES (%s, %s, '', '🤖', '#E8F3FF', 'api_key', %s, %s, %s, 0, 1, %s, %s)''',
+                        (name, g['label'], g['base_url'],
+                         json.dumps(g['types'] or ['llm'], ensure_ascii=False),
+                         '该供应商由已添加的凭据自动补录到模型目录，如需调整名称/描述可直接修改。',
+                         now(), now()))
+            for (mname, mlabel, mtype, ctx, maxtok, vision, fcall, stream) in g['models']:
+                # 模型下拉选项来自 model_definitions，不补则“配置模型”里选不到任何东西
+                cur.execute(r'''INSERT INTO model_definitions
+                        (provider_name, model_name, model_label, model_type, context_size,
+                         max_output_tokens, supports_vision, supports_function_calling,
+                         supports_streaming, status, created_at)
+                        SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s
+                        WHERE NOT EXISTS (SELECT 1 FROM model_definitions
+                                          WHERE provider_name = %s AND model_name = %s)''',
+                            (name, mname, mlabel, mtype, ctx, maxtok, vision, fcall, stream,
+                             now(), name, mname))
+        db.commit()
+        if grouped:
+            logger.info('已补录 %d 个未登记的模型供应商：%s',
+                        len(grouped), ', '.join(sorted(grouped)))
+        return len(grouped)
+    except Exception:
+        db.rollback()
+        logger.exception('补录孤儿模型供应商失败（不阻断启动）')
+        return 0
+    finally:
+        db.close()
+
+
 def _row_to_dict(row):
     """将数据库行转换为 dict，处理 datetime"""
     if not row:
@@ -100,12 +185,14 @@ def _rows_to_list(rows):
 def register_model_routes(app):
     """注册模型配置相关路由"""
     _ensure_tables()
+    _sync_orphan_providers()
 
     # ============================================================
     # 已配置模型（顶部卡片区）
     # ============================================================
 
     @app.route('/api/model-providers/installed', methods=['GET'])
+    @login_required
     def get_installed_providers():
         """获取已安装的模型供应商（去重 + 统计），含最新配置 id 用于 by-id 测试"""
         db = get_db()
@@ -151,6 +238,7 @@ def register_model_routes(app):
     # ============================================================
 
     @app.route('/api/model-providers', methods=['GET'])
+    @login_required
     def get_all_providers():
         """获取所有模型供应商列表（含安装状态）"""
         db = get_db()
@@ -186,6 +274,7 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-providers/<provider_name>', methods=['GET'])
+    @login_required
     def get_provider_detail(provider_name):
         """获取供应商详情（含模型定义）"""
         db = get_db()
@@ -239,6 +328,7 @@ def register_model_routes(app):
     # ============================================================
 
     @app.route('/api/model-providers/<provider_name>/install', methods=['POST'])
+    @login_required
     def install_provider(provider_name):
         """安装模型供应商 —— 创建凭据配置"""
         d = request.get_json()
@@ -341,6 +431,7 @@ def register_model_routes(app):
     # ============================================================
 
     @app.route('/api/model-providers/<provider_name>/uninstall', methods=['POST'])
+    @login_required
     def uninstall_provider(provider_name):
         """卸载模型供应商 —— 禁用所有相关配置"""
         db = get_db()
@@ -363,6 +454,7 @@ def register_model_routes(app):
     # ============================================================
 
     @app.route('/api/model-configs', methods=['GET'])
+    @login_required
     def get_model_configs():
         """获取所有模型配置"""
         provider = request.args.get('provider', '').strip()
@@ -391,6 +483,7 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-configs', methods=['POST'])
+    @login_required
     def create_model_config():
         """创建模型配置"""
         d = request.get_json()
@@ -436,6 +529,7 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-configs/<int:mid>', methods=['PUT'])
+    @login_required
     def update_model_config(mid):
         """更新模型配置"""
         d = request.get_json()
@@ -476,6 +570,7 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-configs/<int:mid>', methods=['DELETE'])
+    @login_required
     def delete_model_config(mid):
         """删除模型配置"""
         db = get_db()
@@ -491,8 +586,14 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-configs/<int:mid>/decrypt', methods=['GET'])
+    @login_required
+    @role_required('admin')
     def get_decrypted_api_key(mid):
-        """获取解密的 API Key（仅内部调用）"""
+        """获取解密的 API Key（仅管理员）
+
+        这是全平台唯一会把明文密钥发回客户端的接口，必须同时过登录与角色两道卡；
+        界面展示请走 /api/model-configs（已脱敏）。
+        """
         db = get_db()
         try:
             cur = db.cursor()
@@ -508,6 +609,7 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-configs/<int:mid>', methods=['GET'])
+    @login_required
     def get_model_config_by_id(mid):
         """获取指定模型配置（脱敏）"""
         db = get_db()
@@ -526,6 +628,7 @@ def register_model_routes(app):
             db.close()
 
     @app.route('/api/model-configs/<int:mid>/test', methods=['POST'])
+    @login_required
     def test_model_config_by_id(mid):
         """按配置 ID 测试模型连接（从 DB 加载配置，无需前端传 key）"""
         db = get_db()
@@ -564,20 +667,72 @@ def register_model_routes(app):
 
             elapsed_ms = int((time.time() - start_time) * 1000)
             result['elapsed_ms'] = elapsed_ms
-            return jsonify(code=200 if result.get('success') else 500, data=result)
+            # 失败原因必须同时出现在顶层 msg：client.ts 对 code!=200 只读 result.msg，
+            # 只放 data.msg 会被前端当成无信息错误，显示为“请求失败”。
+            return jsonify(code=200 if result.get('success') else 500,
+                           msg=None if result.get('success') else (result.get('msg') or '模型连接测试失败'),
+                           data=result)
         except Exception as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
-            return jsonify(code=500, data={
+            fail_msg = f'连接失败: {str(e)}'
+            return jsonify(code=500, msg=fail_msg, data={
                 'success': False,
-                'msg': f'连接失败: {str(e)}',
+                'msg': fail_msg,
                 'elapsed_ms': elapsed_ms,
             })
+
+    @app.route('/api/model-configs/<int:mid>/live-models', methods=['GET'])
+    @login_required
+    def list_live_models(mid):
+        """拉取该凭据在服务商侧真实可用的模型列表（GET {base}/models）。
+
+        model_definitions 里预置的默认模型名可能与这把 key 实际授权的不一致（踩过几次），
+        配置界面需要以服务商返回的列表为准。失败时顶层 msg 给真实原因。
+        """
+        from utils.llm import build_openai_url
+        db = get_db()
+        try:
+            cur = db.cursor()
+            cur.execute(r'SELECT * FROM model_configs WHERE id = %s', (mid,))
+            cfg = cur.fetchone()
+        finally:
+            db.close()
+        if not cfg:
+            return jsonify(code=404, msg='配置不存在')
+        api_key = _decrypt_sensitive_fields({'api_key': cfg['api_key']})['api_key']
+        if not api_key:
+            return jsonify(code=400, msg='该配置没有可用的 API Key')
+        base = (cfg.get('api_base_url') or '').rstrip('/')
+        if not base:
+            return jsonify(code=400, msg='缺少 API Base URL，无法查询可用模型')
+        url = build_openai_url(base, 'models')
+        try:
+            resp = http_requests.get(url, headers={'Authorization': 'Bearer ' + api_key}, timeout=15)
+        except Exception as e:
+            err = '查询可用模型失败: %s' % str(e)[:200]
+            return jsonify(code=500, msg=err)
+        if resp.status_code != 200:
+            err = '服务商返回 HTTP %s: %s' % (resp.status_code, resp.text[:200])
+            return jsonify(code=500, msg=err)
+        try:
+            payload = resp.json()
+        except Exception:
+            return jsonify(code=500, msg='服务商未返回 JSON，该端点可能不支持模型列表查询')
+        items = payload.get('data') or payload.get('models') or []
+        names = sorted({str(m.get('id') or m.get('name')) for m in items
+                        if isinstance(m, dict) and (m.get('id') or m.get('name'))})
+        return jsonify(code=200, data={
+            'models': [{'model_name': n, 'model_label': n} for n in names],
+            'count': len(names),
+            'endpoint': url,
+        })
 
     # ============================================================
     # 模型连接测试（body-based，无需 id）
     # ============================================================
 
     @app.route('/api/model-configs/test', methods=['POST'])
+    @login_required
     def test_model_connection():
         """测试模型连接（body-based）"""
         d = request.get_json()
@@ -606,12 +761,15 @@ def register_model_routes(app):
 
             elapsed_ms = int((time.time() - start_time) * 1000)
             result['elapsed_ms'] = elapsed_ms
-            return jsonify(code=200 if result.get('success') else 500, data=result)
+            return jsonify(code=200 if result.get('success') else 500,
+                           msg=None if result.get('success') else (result.get('msg') or '模型连接测试失败'),
+                           data=result)
         except Exception as e:
             elapsed_ms = int((time.time() - start_time) * 1000)
-            return jsonify(code=500, data={
+            fail_msg = f'连接失败: {str(e)}'
+            return jsonify(code=500, msg=fail_msg, data={
                 'success': False,
-                'msg': f'连接失败: {str(e)}',
+                'msg': fail_msg,
                 'elapsed_ms': elapsed_ms,
             })
 
@@ -780,6 +938,7 @@ def register_model_routes(app):
     # ============================================================
 
     @app.route('/api/model-providers/<provider_name>/config-schema', methods=['GET'])
+    @login_required
     def get_provider_config_schema(provider_name):
         """获取供应商的配置 Schema"""
         db = get_db()

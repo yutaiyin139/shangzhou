@@ -12,8 +12,14 @@ import time
 import uuid
 from datetime import datetime
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.path.insert(0, '.')
+# 用 reconfigure 而不是包一层 TextIOWrapper：后者被回收时会连带关掉真正的 stdout buffer
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+import os
+# 用绝对路径而不是 '.'：让脚本无论从 backend/ 还是 backend/tests/ 启动都能导入 config/engine
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_db  # noqa: E402
 from engine.workflow_runner import run_workflow  # noqa: E402

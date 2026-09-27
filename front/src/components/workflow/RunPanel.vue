@@ -150,6 +150,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { authFetch } from '../../api/client'
 import { toast } from '../../utils/global'
 
 const props = defineProps({
@@ -207,14 +208,22 @@ function stopRun() {
     streamReader = null
   }
   // 通知后端停止
-  fetch('/api/workflows/runs/' + runId + '/stop', { method: 'POST' })
-    .then(r => r.json())
-    .then(data => {
-      if (data.code !== 200 && data.code !== 404) {
-        console.warn('[stop workflow]', data.msg)
+  authFetch('/api/workflows/runs/' + runId + '/stop', { method: 'POST' })
+    .then(r => r.json().then(data => ({ status: r.status, data: data })))
+    .then(res => {
+      const data = res.data || {}
+      if (data.code === 200) {
+        toast('已发送停止指令')
+      } else if (data.code === 404) {
+        // 刚好跑完，不算错
+        toast('该运行已结束')
+      } else {
+        // 以前只 console.warn + catch(() => {})，后端 500 时界面看上去“点了没反应”，
+        // 于是一堆僵尸“运行中”记录没人发现
+        toast('停止失败：' + (data.msg || ('HTTP ' + res.status)))
       }
     })
-    .catch(() => {})
+    .catch(e => toast('停止失败：' + ((e && e.message) || '网络异常')))
 }
 
 function formatVal(v) {
@@ -247,7 +256,7 @@ function stopProgress() {
 
 async function loadInputs() {
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/inputs')
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/inputs')
     const res = await r.json()
     if (res.code === 200) {
       inputs.value = res.data || []
@@ -274,7 +283,7 @@ async function run() {
         }
       }
     } catch (e) { /* ignore */ }
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/run', {
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/run', {
       method: 'POST',
       headers,
       body: JSON.stringify({ inputs: form.value, graph: props.graph, mode: props.mode })
@@ -325,7 +334,7 @@ async function runStream() {
       }
     } catch (e) { /* ignore */ }
     // 使用 fetch + ReadableStream 处理 SSE
-    const response = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/stream', {
+    const response = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/stream', {
       method: 'POST',
       headers,
       body: JSON.stringify({ inputs: form.value, graph: props.graph, mode: props.mode })
@@ -549,7 +558,7 @@ async function saveResult() {
   const runName = prompt('请输入保存名称（可选）：')
   if (runName === null) return
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/test-runs', {
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/test-runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ run_name: runName, result: result.value, inputs: form.value })
@@ -570,7 +579,7 @@ async function openHistory() {
   selectedHistory.value = null
   historyLoading.value = true
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/test-runs')
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/test-runs')
     const res = await r.json()
     if (res.code === 200) {
       history.value = res.data || []

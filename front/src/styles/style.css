@@ -50,13 +50,18 @@ input,textarea,select{ font-family:inherit; font-size:14px; outline:none; }
 
 /* ---------- 用户下拉菜单 ---------- */
 .user-dropdown{ position:relative; }
+/* 展开态用 opacity/transform 过渡，不用 @keyframes 动画：
+   动画在标签页处于后台时会被浏览器冻结在 0% 帧（opacity:0），菜单 display:block
+   却完全看不见，用户主观就是“点了账号信息没反应”。
+   display:none → block 的同一帧不会触发过渡，最差也只是没有淡入，不会看不见。 */
 .dropdown-menu{
   position:fixed; top:56px; right:20px; width:260px;
   background:var(--bg-card); border-radius:10px; box-shadow:var(--shadow-md);
   padding:14px 0; z-index:100; display:none;
-  animation:ddFadeIn .15s ease;
+  opacity:0; transform:translateY(-6px);
+  transition:opacity .15s ease, transform .15s ease;
 }
-.dropdown-menu.show{ display:block; }
+.dropdown-menu.show{ display:block; opacity:1; transform:translateY(0); }
 @keyframes ddFadeIn{ from{ opacity:0; transform:translateY(-6px); } to{ opacity:1; transform:translateY(0); } }
 
 .dd-header{ padding:0 18px 12px; }

@@ -23,6 +23,24 @@ set "OK_COUNT=0"
 set "FAIL_COUNT=0"
 set "WARN_COUNT=0"
 
+REM Read DB/Redis host:port from project-root .env (dev DB may be remote; never assume localhost)
+REM WARNING: `for /f ... in (file)` silently DROPS a KEY=VALUE line that follows a UTF-8 Chinese
+REM comment line, because cmd's codepage-936 reader pairs the comment's trailing byte with the
+REM newline. Measured on this .env: 7 of 73 keys lost, including DB_HOST/DB_USER/REDIS_HOST.
+REM findstr splits lines byte-wise and is immune, so always pre-filter the file through findstr.
+set "DB_HOST=localhost"
+set "DB_PORT=3306"
+set "REDIS_HOST=localhost"
+set "REDIS_PORT=6379"
+if exist "%~dp0.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (`findstr /b /r "DB_HOST= DB_PORT= REDIS_HOST= REDIS_PORT=" "%~dp0.env"`) do (
+    if /i "%%~A"=="DB_HOST"    set "DB_HOST=%%~B"
+    if /i "%%~A"=="DB_PORT"    set "DB_PORT=%%~B"
+    if /i "%%~A"=="REDIS_HOST" set "REDIS_HOST=%%~B"
+    if /i "%%~A"=="REDIS_PORT" set "REDIS_PORT=%%~B"
+  )
+)
+
 REM Parse arguments
 :parse_args
 if "%~1"=="" goto :done_parse
@@ -50,9 +68,9 @@ REM ============================================
 set "REDIS_STATUS=FAIL"
 set "REDIS_DETAIL=not running"
 
-"%REDIS_CLI%" ping >nul 2>nul
+"%REDIS_CLI%" -h %REDIS_HOST% -p %REDIS_PORT% ping >nul 2>nul
 if not errorlevel 1 (
-  for /f "tokens=*" %%i in ('"%REDIS_CLI%" ping 2^>nul') do (
+  for /f "tokens=*" %%i in ('"%REDIS_CLI%" -h %REDIS_HOST% -p %REDIS_PORT% ping 2^>nul') do (
     if "%%i"=="PONG" (
       set "REDIS_STATUS=OK"
       set "REDIS_DETAIL=running"
@@ -63,20 +81,23 @@ if not errorlevel 1 (
   set /a FAIL_COUNT+=1
 )
 
-REM Get Redis version info
+REM Get Redis version info. Do NOT pipe through findstr here: a quoted exe path combined with
+REM `|` inside `for /f ('...')` makes cmd build an invalid command line and the loop yields
+REM nothing plus "The syntax for the file name, a directory name, or a volume label is incorrect".
+REM Also keep parentheses out of the value: it is echoed inside `if ( ... )` blocks later.
 if "%REDIS_STATUS%"=="OK" (
-  for /f "tokens=2 delims=:" %%a in ('"%REDIS_CLI%" INFO server 2^>nul ^| findstr "redis_version"') do (
-    set "REDIS_DETAIL=running (%%a)"
+  for /f "tokens=1,* delims=:" %%a in ('"%REDIS_CLI%" -h %REDIS_HOST% -p %REDIS_PORT% INFO server') do (
+    if /i "%%a"=="redis_version" set "REDIS_DETAIL=running v%%b"
   )
 )
 
 if %JSON_MODE%==1 (
-  echo   {"name":"redis","port":6379,"status":"%REDIS_STATUS%","detail":"%REDIS_DETAIL%"},
+  echo   {"name":"redis","port":%REDIS_PORT%,"status":"%REDIS_STATUS%","detail":"%REDIS_DETAIL%"},
 ) else (
   if "%REDIS_STATUS%"=="OK" (
-    echo   [OK]   Redis    - localhost:6379  - %REDIS_DETAIL%
+    echo   [OK]   Redis    - %REDIS_HOST%:%REDIS_PORT%  - %REDIS_DETAIL%
   ) else (
-    echo   [FAIL] Redis    - localhost:6379  - %REDIS_DETAIL%
+    echo   [FAIL] Redis    - %REDIS_HOST%:%REDIS_PORT%  - %REDIS_DETAIL%
   )
 )
 
@@ -106,27 +127,28 @@ if %JSON_MODE%==1 (
 )
 
 REM ============================================
-REM Check MySQL (via port 3306)
+REM Check MySQL (TCP probe DB_HOST:DB_PORT taken from .env; works for remote DB)
 REM ============================================
 set "MYSQL_STATUS=FAIL"
-set "MYSQL_DETAIL=not running"
+set "MYSQL_DETAIL=not reachable"
 
-netstat -ano | findstr ":3306 " | findstr "LISTENING" >nul 2>nul
+powershell -NoProfile -Command "$c=New-Object System.Net.Sockets.TcpClient; try { $r=$c.BeginConnect('!DB_HOST!',!DB_PORT!,$null,$null); if ($r.AsyncWaitHandle.WaitOne(3000) -and $c.Connected) { exit 0 } else { exit 1 } } catch { exit 1 } finally { $c.Close() }"
 if not errorlevel 1 (
   set "MYSQL_STATUS=OK"
-  set "MYSQL_DETAIL=running"
+  set "MYSQL_DETAIL=reachable"
   set /a OK_COUNT+=1
 ) else (
+  set "MYSQL_DETAIL=!DB_HOST!:!DB_PORT! unreachable"
   set /a FAIL_COUNT+=1
 )
 
 if %JSON_MODE%==1 (
-  echo   {"name":"mysql","port":3306,"status":"%MYSQL_STATUS%","detail":"%MYSQL_DETAIL%"},
+  echo   {"name":"mysql","host":"!DB_HOST!","port":!DB_PORT!,"status":"!MYSQL_STATUS!","detail":"!MYSQL_DETAIL!"},
 ) else (
-  if "%MYSQL_STATUS%"=="OK" (
-    echo   [OK]   MySQL    - localhost:3306  - %MYSQL_DETAIL%
+  if "!MYSQL_STATUS!"=="OK" (
+    echo   [OK]   MySQL    - !DB_HOST!:!DB_PORT!  - !MYSQL_DETAIL!
   ) else (
-    echo   [FAIL] MySQL    - localhost:3306  - %MYSQL_DETAIL%
+    echo   [FAIL] MySQL    - !DB_HOST!:!DB_PORT!  - !MYSQL_DETAIL!
   )
 )
 
@@ -198,7 +220,7 @@ REM ============================================
 set "WORKER_STATUS=FAIL"
 set "WORKER_DETAIL=not running"
 
-tasklist /FI "WINDOWTITLE eq Celery-Worker*" /FO CSV 2>nul | findstr /i "cmd" >nul 2>nul
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'celery' }) { exit 0 } else { exit 1 }" >nul 2>nul
 if not errorlevel 1 (
   set "WORKER_STATUS=OK"
   set "WORKER_DETAIL=running"
@@ -236,7 +258,7 @@ if %JSON_MODE%==0 (
   )
 
   if %OK_COUNT% geq 5 (
-    echo [STATUS] All core services are running ^-^
+    echo [STATUS] All core services are running.
     echo.
   )
 )
@@ -244,11 +266,11 @@ if %JSON_MODE%==0 (
 REM Watch mode
 if %WATCH_MODE%==1 (
   echo.
-  echo --watch mode: refreshing in 30 seconds (Ctrl+C to exit)...
+  echo --watch mode: refreshing in 30 seconds ^(Ctrl+C to exit^)...
   ping -n 31 127.0.0.1 >nul
   cls
   goto :done_parse
 )
 
-endlocal
 if %JSON_MODE%==0 pause
+endlocal

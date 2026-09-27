@@ -4,11 +4,9 @@
       <label>模型</label>
       <select v-model="modelKey" @change="commitModel">
         <option value="">请选择模型</option>
-        <option v-for="m in models" :key="modelOptionKey(m)" :value="modelOptionKey(m)">
-          {{ m.credential_name || m.provider }} / {{ m.model_name }}
-        </option>
+        <option v-for="o in modelChoices" :key="o.key" :value="o.key">{{ o.label }}</option>
       </select>
-      <div v-if="models.length === 0" class="pp-hint">暂无可用模型，请先在「模型」页面添加模型配置。</div>
+      <div v-if="modelChoices.length === 0" class="pp-hint">暂无可用模型，请先在「模型」页面添加模型配置。</div>
     </div>
     <div class="pp-field">
       <label>Temperature</label>
@@ -66,8 +64,8 @@ const props = defineProps({ node: { type: Object, default: null } })
 const emit = defineEmits(['update'])
 
 const {
-  local, commit, models, modelKey, temperature,
-  commitModel, modelOptionKey,
+  local, commit, models, modelKey, modelChoices, temperature,
+  commitModel,
 } = usePanelState(props, emit)
 
 const classifierQuerySelector = computed({

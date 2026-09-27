@@ -127,6 +127,24 @@ export function isAuthenticated(): boolean {
   }
 }
 
+/**
+ * 当前账号的权限级别（'admin' | 'user' | ''）。
+ *
+ * 以**服务端签发的 access token 载荷**为准，而不是 sessionStorage 里的 loginUser：
+ * 后者会被 /api/me 覆盖、也只存在于当前标签页（F5 不丢，新开标签会丢），一旦它没有 role，
+ * 路由守卫就会把管理员静默弹回工作台 —— 表现就是“系统设置点了没反应”。
+ */
+export function getAuthRole(): string {
+  const tokens = getTokens()
+  if (!tokens || !tokens.access_token) return ''
+  try {
+    const payload = JSON.parse(atob(tokens.access_token.split('.')[1]))
+    return String(payload.role || '')
+  } catch (e) {
+    return ''
+  }
+}
+
 // ============================================================
 // Token 刷新机制（防止并发刷新）
 // ============================================================
@@ -334,10 +352,44 @@ export async function logout(): Promise<void> {
 export async function fetchCurrentUser(): Promise<UserInfo | null> {
   const result = await _request<UserInfo>('/api/me', { method: 'GET' })
   if (result.code === 200 && result.data) {
-    setLoginUser(result.data)
-    return result.data
+    /* /api/me 只返回 {email, role, user_id, username}，直接覆盖会把登录时存下的
+       id / nickname / phone / role_name 全抹掉（账号 ID 那一行就变成“-”）。合并写回。 */
+    const prev = getLoginUser() || ({} as UserInfo)
+    const me = result.data as UserInfo & { user_id?: string }
+    const merged: UserInfo = { ...prev, ...me, id: me.id || me.user_id || prev.id || '' }
+    setLoginUser(merged)
+    return merged
   }
   return null
+}
+
+// ============================================================
+// 带凭证的原始 fetch（仅用于拿不到 JSON 的场景）
+// ============================================================
+
+/**
+ * SSE 流式响应、二进制 blob、文件下载这类“不能走 _request 统一解析”的请求用这个。
+ * 普通业务接口一律用 apiGet/apiPost/apiPut/apiDelete。
+ * 后端已启用全局鉴权闸门（REQUIRE_LOGIN_FOR_API），任何裸 fetch 都会 401。
+ */
+export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const build = (token: string | undefined): Headers => {
+    const h = new Headers(options.headers || {})
+    if (token && !h.has('Authorization')) h.set('Authorization', `Bearer ${token}`)
+    return h
+  }
+  const tokens = getTokens()
+  let resp = await fetch(url, { ...options, headers: build(tokens?.access_token) })
+  // 401 且持有 refresh_token 时，沿用与 _request 相同的刷新策略重试一次
+  if (resp.status === 401 && tokens?.refresh_token) {
+    try {
+      const fresh = await _refreshToken()
+      resp = await fetch(url, { ...options, headers: build(fresh) })
+    } catch (e) {
+      // 刷新失败就把原 401 交回调用方，不静默吞掉状态码
+    }
+  }
+  return resp
 }
 
 // ============================================================
@@ -353,10 +405,11 @@ export default {
   isAuthenticated,
   request: _request,
   get: apiGet,
-  post: apiPut,
+  post: apiPost,   // 曾经写成 apiPut，导致 api.post() 发出的其实是 PUT（知识库新增分段/导入等直接坏掉）
   put: apiPut,
   delete: apiDelete,
   login,
   logout,
   fetchCurrentUser,
+  authFetch,
 }

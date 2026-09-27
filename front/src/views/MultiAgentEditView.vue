@@ -199,7 +199,7 @@
 <script setup>
 import { onMounted, onUnmounted } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { toast, openModal, closeModal, getLoginUser } from '../utils/global'
+import { toast, openModal, closeModal } from '../utils/global'
 
 /* 下拉菜单的全局点击关闭 */
 function onDocClick(){
@@ -512,8 +512,8 @@ onMounted(function(){
 
   /* 添加 Agent */
   function loadSubAgents(){
-    var uid = (getLoginUser() && getLoginUser().id) || 1;
-    apiGet('/api/agents/accessible', { params: { uid: uid } }).then(function(data){
+    /* 不传 uid：后端只看登录 token 里的身份（_safe_uid），客户端 id 一律忽略 */
+    apiGet('/api/agents/accessible').then(function(data){
       if (data.code === 200){
         amAgents = data.data || [];
         renderAgentRows();

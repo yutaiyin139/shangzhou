@@ -2,21 +2,12 @@
 """数据表结构定义"""
 
 # ============================================================
-# 用户权限表（登录、角色、权限管理）
+# 用户权限表（角色、权限管理）
 # ============================================================
-
-USERS_TABLE_SQL = r'''
-CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    account_id VARCHAR(36) NOT NULL COMMENT '关联 dify_accounts.id',
-    phone VARCHAR(20) DEFAULT '',
-    status TINYINT(1) DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_account_id (account_id),
-    INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-'''
+# 这里刻意没有 users 表的建表语句：账号的唯一真相源是 dify_accounts
+# （见 DIFY_ACCOUNTS_TABLE_SQL），旧 users.id 已在“users 合并进 dify_accounts”时废弃并删表。
+# 不要加回来：deploy-ubuntu.sh 是按 *_TABLE_SQL 名字遍历建表的，一旦重新定义这个常量，
+# 每次全新部署都会把这张全仓没人读的幽灵表建回来（已部署的机器则由部署脚本主动 DROP）。
 
 ROLES_TABLE_SQL = r'''
 CREATE TABLE IF NOT EXISTS roles (
@@ -192,7 +183,7 @@ CREATE TABLE IF NOT EXISTS agent_config_revisions (
     config_json TEXT NOT NULL COMMENT '配置快照 JSON',
     strategy VARCHAR(30) DEFAULT 'react' COMMENT '策略类型',
     change_note VARCHAR(200) DEFAULT '' COMMENT '变更说明',
-    created_by INT DEFAULT 1,
+    created_by VARCHAR(36) DEFAULT NULL COMMENT 'dify_accounts.id；旧版本是 INT DEFAULT 1（已删除的 users.id）',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_agent_id (agent_id),
     INDEX idx_created_at (created_at)

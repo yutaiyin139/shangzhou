@@ -637,9 +637,9 @@ def _extract_pdf_text(params):
         return json.dumps({'error': '需要 file_path 或 url 参数'}, ensure_ascii=False)
 
     try:
-        import PyPDF2
+        from pypdf import PdfReader
     except ImportError:
-        return json.dumps({'error': 'PyPDF2 未安装，请运行: pip install PyPDF2'}, ensure_ascii=False)
+        return json.dumps({'error': 'pypdf 未安装，请运行: pip install pypdf'}, ensure_ascii=False)
 
     try:
         if url:
@@ -648,12 +648,12 @@ def _extract_pdf_text(params):
                 return json.dumps({'error': 'URL 被安全策略禁止'}, ensure_ascii=False)
             resp = urllib.request.urlopen(url, timeout=30)
             pdf_bytes = resp.read()
-            reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+            reader = PdfReader(io.BytesIO(pdf_bytes))
         else:
             path = _safe_file_path(file_path)
             if not os.path.exists(path):
                 return json.dumps({'error': f'文件不存在: {path}'}, ensure_ascii=False)
-            reader = PyPDF2.PdfReader(path)
+            reader = PdfReader(path)
 
         text_parts = []
         for page in reader.pages:

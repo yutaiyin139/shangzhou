@@ -42,10 +42,15 @@
   </AppShell>
 </template>
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onActivated, onUnmounted } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import { toast, openModal, closeModal } from '../utils/global'
 import { apiGet, apiPost, apiDelete } from '../api/client'
+
+/* keep-alive 下 onMounted 只会执行一次：把“重新拉一次详情”的钩子提到组件作用域，
+   供 onActivated 在每次回到本页时刷新（比如在广场里刚安装/卸载完又回到详情页）。 */
+var _reloadDetail = null
+var _firstActivate = true
 
 onMounted(function(){
   var root = document.querySelector('#page-root');
@@ -158,12 +163,25 @@ onMounted(function(){
   window.uninstallSkill = uninstallSkill;
   window.delSkill = delSkill;
 
+  _reloadDetail = function(){ loadDetail(); };
   loadDetail();
+})
+
+onActivated(function(){
+  /* 首次挂载后 Vue 也会紧接着触发一次 activated，跳过它以免重复请求 */
+  if (_firstActivate){ _firstActivate = false; return; }
+  if (_reloadDetail) _reloadDetail();
 })
 </script>
 <style>
   .sd-topbar{ display:flex; align-items:center; gap:16px; padding:14px 24px; background:#fff;
     border-bottom:1px solid var(--border-light); position:sticky; top:0; z-index:10; }
+  /* styles/style.css 里有一条 `.main-white > *:not(.breadcrumb){flex:1;min-height:0}`，
+     是给“整页填充”类页面（工作台/编辑器）用的；本页是文档式长页，两个直接子节点
+     会被拉成等分高度：实测 topbar 从 61px 涨到 142px（中间一条空白带），正文只剩 207px。
+     这里显式改回“按内容取高 + 交给 main 滚动”（topbar 的 sticky 也需要 main 可滚才生效）。 */
+  .main-white > .sd-topbar{ flex:0 0 auto; }
+  .main-white > .sd-body{ flex:0 0 auto; }
   .sd-crumb{ font-size:14px; color:var(--text-3); }
   .sd-crumb a{ color:var(--text-3); cursor:pointer; }
   .sd-crumb a:hover{ color:var(--primary); }

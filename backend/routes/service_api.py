@@ -141,12 +141,28 @@ def workflow_run_status(task_id):
 @api_key_required
 def workflow_stop(task_id):
     """停止工作流运行"""
+    # task_id 可能是 Celery 任务 ID，也可能是本地运行记录 ID；revoke_workflow_task 是普通函数
+    # （不是 celery 任务，不能 .delay()）且只认 Celery ID，所以两条路都试并如实回报。
+    marked = False
     try:
-        from tasks.workflow_tasks import stop_workflow_run
-        stop_workflow_run.delay(task_id)
-        return jsonify(code=200, msg='停止请求已发送')
-    except Exception as e:
-        return jsonify(code=500, msg=str(e))
+        from engine.workflow_utils import cancel_workflow_task
+        marked = bool(cancel_workflow_task(task_id))
+    except Exception:
+        pass
+    revoked = False
+    try:
+        from tasks.workflow_tasks import revoke_workflow_task
+        revoke_workflow_task(task_id)
+        revoked = True
+    except Exception:
+        pass
+    if marked:
+        msg = '停止指令已送达正在执行的任务'
+    elif revoked:
+        msg = '已发送 Celery 取消信号（若任务不在本 worker 中执行则不会生效）'
+    else:
+        msg = '未找到该任务的执行句柄，可能已经结束'
+    return jsonify(code=200, msg=msg)
 
 
 @bp.route('/v1/workflows/logs', methods=['GET'])
@@ -365,12 +381,26 @@ def chat_messages():
 @api_key_required
 def chat_stop(task_id):
     """停止聊天生成"""
+    marked = False
     try:
-        from tasks.workflow_tasks import stop_workflow_run
-        stop_workflow_run.delay(task_id)
-        return jsonify(code=200, msg='停止请求已发送')
-    except Exception as e:
-        return jsonify(code=500, msg=str(e))
+        from engine.workflow_utils import cancel_workflow_task
+        marked = bool(cancel_workflow_task(task_id))
+    except Exception:
+        pass
+    revoked = False
+    try:
+        from tasks.workflow_tasks import revoke_workflow_task
+        revoke_workflow_task(task_id)
+        revoked = True
+    except Exception:
+        pass
+    if marked:
+        msg = '停止指令已送达正在执行的任务'
+    elif revoked:
+        msg = '已发送 Celery 取消信号（若任务不在本 worker 中执行则不会生效）'
+    else:
+        msg = '未找到该任务的执行句柄，可能已经结束'
+    return jsonify(code=200, msg=msg)
 
 
 # ============================================================

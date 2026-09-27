@@ -51,6 +51,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { authFetch } from '../../api/client'
 
 const props = defineProps({
   appId: { type: String, required: true }
@@ -68,7 +69,7 @@ const saving = ref(false)
 
 async function load() {
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/variables')
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/variables')
     const res = await r.json()
     if (res.code === 200) {
       envVars.value = res.data.environment_variables || {}
@@ -95,7 +96,7 @@ function delConv(key) { delete convVars.value[key] }
 async function save() {
   saving.value = true
   try {
-    const r = await fetch('/api/workflows/' + encodeURIComponent(props.appId) + '/variables', {
+    const r = await authFetch('/api/workflows/' + encodeURIComponent(props.appId) + '/variables', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ environment_variables: envVars.value, conversation_variables: convVars.value })

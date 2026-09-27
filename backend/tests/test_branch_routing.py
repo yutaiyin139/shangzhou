@@ -13,8 +13,15 @@
 import io
 import sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.path.insert(0, '.')
+# 用 reconfigure 而不是包一层 TextIOWrapper：后者被回收时会连带关掉真正的 stdout buffer，
+# 在 pytest 下会让捕获层直接崩成 ValueError: I/O operation on closed file
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+import os
+# 用绝对路径而不是 '.'：让脚本无论从 backend/ 还是 backend/tests/ 启动都能导入 config/engine
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import engine.workflow_runner as R  # noqa: E402
 

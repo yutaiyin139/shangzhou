@@ -174,10 +174,15 @@
   </AppShell>
 </template>
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, onActivated } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { toast, openModal, closeModal, getLoginUser } from '../utils/global'
+import { toast, openModal, closeModal } from '../utils/global'
 import { apiGet, apiPost, apiPut, apiDelete } from '../api/client'
+import { registerListGlobals } from '../utils/listGlobals'
+
+/* keep-alive 下 onMounted 只跑一次，而这批内联 onclick 入口与“工作流应用 / 我的应用 /
+   单智能体”重名，谁最后挂载谁占着 window。留一个可重放的引用，由 onActivated 重登记。 */
+var _rebindListGlobals = null
 
 /* 下拉菜单的全局点击关闭（提升为顶层：离开页面时可移除监听器，避免泄漏报错） */
 function onDocClick(e){
@@ -202,7 +207,7 @@ onMounted(function(){
   var agents = [];          // 多智能体应用（来自 /api/multi-agents）
   var loaded = false;       // 列表是否已从后端加载完成
   var curFilter = 'all';
-  var uid = (getLoginUser() && getLoginUser().id) || 1;
+  /* 不再传 uid：列表与创建都按登录 token 里的账号归属走（后端 _safe_uid 只认 token） */
 
   function esc(s){ return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -221,7 +226,7 @@ onMounted(function(){
 
   /* 从后端加载多智能体列表（当前登录用户创建的） */
   function loadAgents(){
-    apiGet('/api/multi-agents?uid=' + uid).then(function(data){
+    apiGet('/api/multi-agents').then(function(data){
       loaded = true;
       if (data.code === 200){
         agents = data.data || [];
@@ -327,8 +332,7 @@ onMounted(function(){
     apiPost('/api/multi-agents', {
       name: name.value.trim(),
       role: document.getElementById('caRole').value.trim(),
-      description: document.getElementById('caDesc').value.trim(),
-      uid: uid
+      description: document.getElementById('caDesc').value.trim()
     }).then(function(data){
       delete btn.dataset.busy;
       btn.textContent = '创建';
@@ -530,6 +534,17 @@ onMounted(function(){
   window.copyDebugUrl = copyDebugUrl;
   window.shareDebug = shareDebug;
   window.confirmDelete = confirmDelete;
+
+  /* 上面是挂载时的首次登记；这份可重放实现由 onActivated 在每次回到本页时跑一次，
+     保证 window 上永远是当前可见页面的闭包。 */
+  _rebindListGlobals = function(){
+    registerListGlobals({
+      toggleCardMenu: toggleCardMenu, openEditModal: openEditModal, openDebug: openDebug,
+      sendDebug: sendDebug, copyDebugUrl: copyDebugUrl, shareDebug: shareDebug,
+      confirmDelete: confirmDelete, openTemplatePicker: openTemplatePicker,
+      openCaIconPicker: openCaIconPicker,
+    })
+  }
   var dslIdx = -1;
   function genDsl(a){
     return JSON.stringify({
@@ -648,6 +663,10 @@ onMounted(function(){
 onUnmounted(function(){
   /* 组件卸载时移除全局监听器，防止在其他页面点击时反复执行 */
   document.removeEventListener('click', onDocClick);
+});
+onActivated(function(){
+  /* 抢回本视图的内联 onclick 入口（见 _rebindListGlobals 注释） */
+  if (_rebindListGlobals) _rebindListGlobals();
 });
 </script>
 <style>

@@ -176,8 +176,14 @@
 <script setup>
 import { onMounted, onActivated, onDeactivated } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { toast, openModal, closeModal, getLoginUser } from '../utils/global'
+import { toast, openModal, closeModal } from '../utils/global'
 import { apiGet, apiPost, apiDelete } from '../api/client'
+import { registerListGlobals } from '../utils/listGlobals'
+
+/* keep-alive 下 onMounted 只跑一次，而本视图向 window 登记的那批内联 onclick 入口
+   （confirmDelete / toggleCardMenu …）与“我的应用 / 单智能体 / 多智能体”重名，
+   谁最后挂载谁占着 window。这里留一个可重放的引用，由 onActivated 每次激活重登记。 */
+var _rebindListGlobals = null
 
 /* 命名函数：点击空白处关闭卡片更多菜单 */
 function onDocClick(e){
@@ -213,7 +219,7 @@ onMounted(function(){
   
   var apps = [];
   var creating = false;
-  var uid = (getLoginUser() && getLoginUser().id) || '';
+  /* 不再传 uid：应用归到哪个工作区由登录 token 里的账号决定（后端 _safe_uid 只认 token） */
   var models = [];
   var selectedModel = null;
   var TYPE_LABEL = { workflow: '工作流', chatflow: 'CHATFLOW', chat: 'CHATFLOW', agent: 'AGENT', 'advanced-chat': '对话流', 'agent-chat': 'Agent' };
@@ -283,13 +289,17 @@ onMounted(function(){
     if (q) list = list.filter(function(a){ return a.name.indexOf(q) > -1; });
     document.getElementById('stGrid').innerHTML = list.map(function(a, i){
       var href = studioHash(a);
+      /* 内联 onclick 传的下标必须是它在**完整 apps** 里的下标：
+         搜索时 list 是过滤后的子集，用过滤后的 i 去取 apps[i] 会删掉一个
+         完全不相干的应用，而被点的那张卡 splice 后仍在过滤结果里 —— 看着就是“删不掉”。 */
+      var realIdx = apps.indexOf(a);
       return '<div class="st-card" onclick="location.hash=\'' + href + '\'" style="position:relative">' +
-        '<div class="sc-more-wrap"><button class="sc-more" onclick="event.stopPropagation();toggleCardMenu(this,' + i + ')"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/></svg></button>' +
-        '<div class="sc-dd" id="card-dd-' + i + '">' +
+        '<div class="sc-more-wrap"><button class="sc-more" onclick="event.stopPropagation();toggleCardMenu(this,' + realIdx + ')"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/></svg></button>' +
+        '<div class="sc-dd" id="card-dd-' + realIdx + '">' +
           '<div class="sc-dd-item" onclick="event.stopPropagation();location.hash=\'' + href + '\'">打开编排</div>' +
-          '<div class="sc-dd-item" onclick="event.stopPropagation();openDslModal(' + i + ')">导出 DSL</div>' +
+          '<div class="sc-dd-item" onclick="event.stopPropagation();openDslModal(' + realIdx + ')">导出 DSL</div>' +
           '<div class="sc-dd-divider"></div>' +
-          '<div class="sc-dd-item danger" onclick="event.stopPropagation();confirmDelete(' + i + ')">删除</div>' +
+          '<div class="sc-dd-item danger" onclick="event.stopPropagation();confirmDelete(' + realIdx + ')">删除</div>' +
         '</div></div>' +
         '<div class="sc-head"><span class="sc-ico" style="background:' + a.icoBg + ';">' + a.ico + a.badge + '</span>' +
         '<span><div class="sc-name">' + a.name + '</div><div class="sc-type">' + a.type + '</div></span></div>' +
@@ -570,7 +580,7 @@ onMounted(function(){
     var btn = document.querySelector('[data-action="createWf()"]');
     var btnText = btn ? btn.innerHTML : '';
     if (btn) btn.innerHTML = '创建中…';
-    apiPost('/api/workflows/create', { name: name, description: description, mode: appType, model: modelPayload }, { params: { uid } })
+    apiPost('/api/workflows/create', { name: name, description: description, mode: appType, model: modelPayload })
     .then(function(res){
       creating = false;
       if (btn) btn.innerHTML = btnText;
@@ -729,11 +739,28 @@ onMounted(function(){
   }
   window.showAppTemplates = showAppTemplates;
 
+  /* 上面那批 window.X = X 是挂载时的首次登记；这里留一份可重放的实现，
+     由 onActivated 在每次回到本页时重新把 window 上的同名函数抢回本视图的闭包。
+     不这么做的话：先去“我的应用”再回本页，卡片上的「删除」调的是那边的 confirmDelete
+     （闭包里读的是 agents）—— 确认框显示别人的应用名，点确认又因下标越界静默 return。 */
+  _rebindListGlobals = function(){
+    registerListGlobals({
+      closeMenus: closeMenus, toggleCardMenu: toggleCardMenu, confirmDelete: confirmDelete,
+      openDslModal: openDslModal, openWfModal: openWfModal, onModelChange: onModelChange,
+      openTypeFilter: openTypeFilter, openTagFilter: openTagFilter,
+      openCreatorFilter: openCreatorFilter, openSortMenu: openSortMenu,
+      importDslFile: importDslFile, showNewbieHelp: showNewbieHelp,
+      openIconPicker: openIconPicker, showAppTemplates: showAppTemplates,
+    })
+  }
+
 });
 
 /* keep-alive 兼容：注册/清理 document 点击监听器 */
 onActivated(() => {
   document.addEventListener('click', onDocClick);
+  /* 抢回本视图的内联 onclick 入口（见 _rebindListGlobals 注释） */
+  if (_rebindListGlobals) _rebindListGlobals();
 });
 
 onDeactivated(() => {

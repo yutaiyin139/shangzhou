@@ -125,14 +125,67 @@ bash     scripts/szagent-ctl.sh status          # 状态总览（免 root）
 
 > 启动顺序 infra→backend→front，停止取逆序；`restart`/`help` 亦支持。
 
+### 换机器 / 改地址：`set_ip.py`
+
+多台机器部署时用于修正仓库里的各类地址。与早期“全文盲替换”写法不同，它**只改已登记的配置点**，
+每个点带角色语义，回环与本机基础设施地址不显式点名就永不改动。
+
+```powershell
+python set_ip.py --show                                 # 先看当前地址分布（不改动任何文件）
+python set_ip.py 192.168.1.20 --probe                   # 预览 + 按协议实测新地址可用性
+python set_ip.py 192.168.1.20 --apply                   # 确认后写入（自动备份，可回滚）
+python set_ip.py 192.168.1.20 --old-ip 10.38.3.14       # 只迁移指定旧地址
+python set_ip.py 192.168.1.20 --role db,deploy --apply  # 只改数据库与部署目标
+python set_ip.py 192.168.1.20 --from localhost --role backend   # 前端指向远程后端
+python set_ip.py --restore                              # 回滚最近一次修改
+```
+
+角色：`db`（MySQL）/ `app`（平台对外访问地址）/ `deploy`（Ubuntu 目标机与文档示例）/
+`backend`（前端 dev 代理与 e2e 基址）/ `storage`（MinIO）/ `redis`（**默认不参与**）。
+
+要点：
+- 默认只预览，`--apply` 才写盘；改前备份到 `logs/set_ip_backup/<时间戳>/`，`--restore` 一键回滚。
+- 字节级按行改写，保持各文件原有行尾（`.bat` 为 CRLF、`.sh` 为 LF）与编码。
+- `.env.example` 与 nginx/gunicorn/redis `bind` 等回环地址不在管辖范围内，不会被改坏。
+- 新地址若属于 `vEthernet`（Hyper-V/WSL 虚拟交换机）会红色提醒：该地址重启后会被重新分配，不适合做部署地址。
+- **改完必须重启服务**才生效；`backend` 角色变更后 dev 需重启 Vite、生产需重新 `npm run build`。
+- `.env` 已被 gitignore（机器专属）；`scripts/`、`docs/`、`README.md` 的改动会进 git，请 review 后提交。
+
 ---
 
 ## 登录与账号
 
+**账号的唯一真相源是 `szagent` 库的 `dify_accounts` 表**。旧 `users` 表已合并进它并删除，
+`models/tables.py` 里也刻意不再定义 `users` 建表语句（否则全新部署会被 `deploy-ubuntu.sh`
+按 `*_TABLE_SQL` 遍历建回一张没人读的幽灵表），已部署机器上的残留由部署脚本主动 `DROP`。
+角色在 `user_roles` → `roles`（`user_roles.user_id` 直接存 `dify_accounts.id`）。
+
+- **身份只有一个出处**：后端一律使用登录 token 里的 `user_id`（= `dify_accounts.id`，UUID），
+  **客户端传来的 `?uid=` / `body.uid` / `owner_id` 全部忽略**（见 `utils/helpers.py:_safe_uid`）。
+  资源归属（`agents.owner`、`dify_apps.created_by` 等）也只写这个值；拿不到登录身份时创建类接口
+  直接 401，不会落库造出“对任何账号都不可见”的无主数据。
 - 后端启动时 `routes/auth.py:_init_default_admin()` 创建 `admin`/`user` 角色，并把 `admin` 角色授予账号名 **`yutaiyin`**。
-- **不存在统一默认口令**（历史上"admin / 000000"的说法已过时）：登录密码取自 `szagent` 库 `dify_accounts` 表（argon2id/PBKDF2 加盐哈希）。
-- 需重置密码：`python scripts/maintenance/reset_password.py`。
+- **不存在统一默认口令**（历史上"admin / 000000"的说法已过时）：登录密码取自 `dify_accounts`（argon2id/PBKDF2 加盐哈希）。
+  需重置密码：`python scripts/maintenance/reset_password.py`。
+- **权限级别只有一个口径**：登录签发的 `role` 为 `admin` 还是 `user`，取决于该账号是否**拥有名为
+  `admin` 的角色**（`utils/auth.py:get_account_role`）。不再按子串猜角色名：历史上“业务管理员”
+  会被误提成 `admin`，而 `role=admin` 是跳过资源归属校验与放行管理员菜单的凭据。
+  `roles` 表里遗留的中文角色（运维管理员/业务管理员/普通用户）作为“功能点分组”继续可用，
+  但**不再等于管理员**；需要管理员请把账号关联到 `admin` 角色。
+  - **用户/角色管理面只对管理员开放**（`utils/auth.py:platform_admin_required`，实时查库）：
+    `/api/users` 的读与全部写、`/api/roles` 与 `/api/roles/<id>/permissions` 的写。
+    集中闸门只保证“必须登录”，挡不住“普通用户拉到全体账号的邮箱/手机号、
+    建一个 `role=admin` 的号、改任何人密码、给自己加权”这条提权路。
+    这里故意不读 token 里的 `role`：access token 有效期 2h，被降权或封禁的账号
+    不应还能拿旧令牌行使管理员权力。`/api/roles`、`/api/permissions` 的 **GET** 仍对登录用户开放
+    （用户管理页的角色下拉要用）。
+- **账号名与邮箱全库交叉唯一**：新账号名/邮箱不得与任何已有账号的 `name` 或 `email` 相同。
+  因为登录是 `WHERE name = ? OR email = ?` 一个条件找两种输入，一旦“某人的邮箱恰好等于
+  另一人的账号名”就会命中两行（历史上真出现过）。“忘记密码”也按邮箱寻址，因此邮箱还必须是
+  合法格式。
 - 新注册账号默认 `role=user`；注册开关/邀请码在系统设置中管控（后端 `/api/register` 强制读取）。
+- 清理 e2e/安全探针留下的垃圾账号（含非法邮箱、`IDOR-PROBE` 哨兵）与无主应用归属：
+  `python scripts/maintenance/cleanup_test_accounts.py`（缺省 dry-run，加 `--apply` 才写库）。
 
 ## 验证服务是否正常
 
@@ -147,6 +200,38 @@ curl -I http://localhost                          # 生产经 Nginx，期望 200
 cd backend && PYTHONIOENCODING=utf-8 python ../scripts/test_deep_research_assistant.py
 #   期望 20 PASS / 0 FAIL（建库→向量化→澄清→检索→报告→发布→再问）
 ```
+
+## 运维自检脚本（`scripts/maintenance/`）
+
+这几个脚本都是只读体检（带 `--apply` 的除外），发布前跑一遍比人工对账可靠：
+
+| 脚本 | 作用 |
+|------|------|
+| `check_env_parity.py` | 代码读取的环境变量 ↔ `.env.example` ↔ 部署生成的 `.env` 三方对齐；加 `--strict` 作发布门禁。**为什么必要**：`REQUIRE_LOGIN_FOR_API` 不设即为 `off`（全部接口免登录） |
+| `check_agent_ownership.py` | `agents.owner` 列类型/回填/能否反查账号、每个账号可见多少自有资源、emoji 往返完整性 |
+| `verify_ownership_enforcement.py` | 对运行中后端打真实 HTTP 的越权与可见性断言（登录闸门、列表、详情 403、账户 IDOR）；令牌按库中账号签发，不含口令 |
+| `check_password_hash.py` | 密码哈希可验证性：PBKDF2/Argon2 两条路径往返自证 + 存量账号格式分布 |
+| `check_db_charset.py` | 全库表/列字符集，找出仍会把 emoji 截成 `?` 的列（只报修复 SQL，不自行 ALTER） |
+| `migrate_agent_owner.py` | `agents.owner` INT→UUID 迁移，默认 dry-run，`--apply --backup` 才写库 |
+| `cleanup_test_accounts.py` | 清理 e2e 跑出的 `test_*` 账号与孤立租户；默认 dry-run，带“名下无资源 + 非主账号 + 可按名字保护”护栏 |
+
+```bash
+cd backend
+python ../scripts/maintenance/check_env_parity.py --strict
+python ../scripts/maintenance/check_password_hash.py
+python ../scripts/maintenance/check_agent_ownership.py
+python ../scripts/maintenance/check_db_charset.py
+python ../scripts/maintenance/verify_ownership_enforcement.py   # 需后端已启动
+```
+
+## 发布前检查清单
+
+1. 上面五条自检命令全部 `[OK]`/`[PASS]`，且**没有 `[SKIP]` 用例**（跳过等于没验）。
+2. `cd backend && python -m pytest tests -q` 全绿；`e2e_*.py` 命名不被 pytest 收集，需改单独跑：`python tests/e2e_p2_fixes_check.py`。
+3. `requirements.txt` 的版本与实跑环境一致（升级依赖要整套回归，别单包 `pip -U`）。
+4. 前端 `cd front && npm run build` 通过（含 `vue-tsc` 类型检查），并确认产物内联了 `VITE_LOGIN_CAPTCHA=true`。
+5. `scripts/clean-for-release.bat` 清掉 `front/dist`、`node_modules`、`qdrant/storage`（向量库数据，约 460 MB，不可随包）与一次性脚本。
+6. 部署完成后按 `deploy-ubuntu.sh` 结尾的“安全步骤”收口注册（系统里没有预置账号，也没有默认密码）。
 
 ## 常见问题
 
@@ -163,4 +248,5 @@ cd backend && PYTHONIOENCODING=utf-8 python ../scripts/test_deep_research_assist
 
 - `.env` 含密钥，权限 600，**不入库、不入镜像**；`ENCRYPTION_KEY` 一旦启用不可更换（丢失将无法解密已存模型 API Key）。
 - 生产 `FLASK_DEBUG=0`；`JWT_SECRET`/DB 密码/Redis 密码使用强随机值。
-- 数据库须 `utf8mb4`：应用模板/图标含 emoji，utf8mb3 会写成 `?` 破坏 DSL YAML。
+- 数据库须 `utf8mb4`：应用模板/图标含 emoji，utf8mb3 会写成 `?` 破坏 DSL YAML。现用
+  `scripts/maintenance/check_db_charset.py` 逐列把关（表级对不代表列级对）。

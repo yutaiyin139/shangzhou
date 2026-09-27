@@ -1,5 +1,5 @@
 <template>
-  <AppShell active-key="home" main-class="main-white">
+  <AppShell active-key="home" main-class="main-white home-main">
     <div class="home-wrap">
       <!-- 中间：任务导航面板 -->
       <aside class="task-panel" id="task-panel">
@@ -885,7 +885,12 @@ onDeactivated(() => {
 .ico-btn:hover{ color:var(--primary); border-color:var(--primary); }
 .wb-center{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
   overflow:hidden; padding:2px; min-height:0; }
-.main-white{ overflow:hidden !important; }
+/* 主页这一屏不要出现滚动条（工作台靠内部面板各自滚）。
+   不能写成 .main-white{...}：本组件的 <style> 不带 scoped，那条规则会变成全局的，
+   把所有用 main-class="main-white" 的页面（技能详情、审计日志、用户管理、账号信息等 14 个）
+   的 overflow-y 一起按成 hidden —— 长内容直接滚不到底、看不全（实测技能详情被裁 243px）。
+   故只给主页一个自己的类。 */
+.main.home-main{ overflow:hidden !important; }
 .wb-center.chatting{ justify-content:flex-start; overflow-y:auto; align-items:stretch; }
 .wb-welcome{ display:flex; flex-direction:column; align-items:center; justify-content:center; padding:1px;
   max-height:100%; overflow-y:auto; }

@@ -5,6 +5,8 @@ import uuid
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
+from utils.helpers import _safe_uid
+
 from models.tables import PLUGINS_TABLE_SQL, PLUGIN_INSTALLS_TABLE_SQL
 from config import get_db
 from utils.auth import login_required
@@ -94,7 +96,7 @@ def list_plugins():
 
     # 公开插件或自己的插件
     where.append(r'(is_public = 1 OR author_id = %s)')
-    params.append(request.user_id or '')
+    params.append(_safe_uid(None))
 
     if plugin_type and plugin_type != 'all':
         where.append(r'plugin_type = %s')
@@ -186,7 +188,7 @@ def create_plugin():
                         plugin_id, name, plugin_type,
                         body.get('description', ''),
                         body.get('version', '1.0.0'),
-                        request.user_id or '',
+                        _safe_uid(None),
                         body.get('author_name', ''),
                         body.get('icon', '🧩'),
                         body.get('icon_background', '#F5E8FF'),
@@ -302,7 +304,7 @@ def install_plugin(plugin_id):
         # 检查是否已安装
         cur.execute(
             r'SELECT id FROM plugin_installs WHERE plugin_id = %s AND installed_by = %s AND status IN ("installed", "enabled")',
-            (plugin_id, request.user_id or '')
+            (plugin_id, _safe_uid(None))
         )
         if cur.fetchone():
             return jsonify(code=400, msg='插件已安装')
@@ -312,7 +314,7 @@ def install_plugin(plugin_id):
                         installed_at, updated_at)
                        VALUES (%s, %s, %s, %s, 'installed', %s, %s, %s)''',
                     (
-                        install_id, plugin_id, request.user_id or '',
+                        install_id, plugin_id, _safe_uid(None),
                         row['version'] or '1.0.0',
                         json.dumps(body.get('config', {}), ensure_ascii=False),
                         now, now,
@@ -337,7 +339,7 @@ def uninstall_plugin(plugin_id):
         cur = db.cursor()
         cur.execute(
             r'UPDATE plugin_installs SET status = "uninstalled", updated_at = %s WHERE plugin_id = %s AND installed_by = %s',
-            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), plugin_id, request.user_id or '')
+            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), plugin_id, _safe_uid(None))
         )
         db.commit()
         return jsonify(code=200, msg='卸载成功')
@@ -357,7 +359,7 @@ def enable_plugin(plugin_id):
         cur = db.cursor()
         cur.execute(
             r'UPDATE plugin_installs SET status = "enabled", updated_at = %s WHERE plugin_id = %s AND installed_by = %s',
-            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), plugin_id, request.user_id or '')
+            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), plugin_id, _safe_uid(None))
         )
         db.commit()
         return jsonify(code=200, msg='已启用')
@@ -377,7 +379,7 @@ def disable_plugin(plugin_id):
         cur = db.cursor()
         cur.execute(
             r'UPDATE plugin_installs SET status = "disabled", updated_at = %s WHERE plugin_id = %s AND installed_by = %s',
-            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), plugin_id, request.user_id or '')
+            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), plugin_id, _safe_uid(None))
         )
         db.commit()
         return jsonify(code=200, msg='已停用')
@@ -400,7 +402,7 @@ def list_installed_plugins():
                        INNER JOIN plugin_installs pi ON p.id = pi.plugin_id
                        WHERE pi.installed_by = %s AND pi.status IN ('installed', 'enabled')
                        ORDER BY pi.installed_at DESC''',
-                    (request.user_id or '',))
+                    (_safe_uid(None),))
         items = []
         for r in cur.fetchall():
             plugin = _row_to_plugin(r)

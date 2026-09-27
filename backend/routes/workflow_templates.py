@@ -351,14 +351,16 @@ def register_workflow_template_routes(app):
     def list_workflow_template_categories():
         """获取工作流模板分类列表"""
         categories = [
-            {'key': 'all', label: '全部', icon: '📁'},
-            {'key': 'general', label: '通用', icon: '📋'},
-            {'key': 'analysis', label: '数据分析', icon: '📊'},
-            {'key': 'automation', label: '自动化', icon: '⚙️'},
-            {'key': 'integration', label: '集成', icon: '🔗'},
-            {'key': 'data', label: '数据处理', icon: '🗃️'},
-            {'key': 'content', label: '内容创作', icon: '✍️'},
-            {'key': 'customer', label: '客户服务', icon: '💬'},
+            # 字典键必须加引号：这里曾写成 JS 对象字面量（label: / icon: 未转成字符串），
+            # 导致本接口一调用就 NameError: name 'label' is not defined
+            {'key': 'all', 'label': '全部', 'icon': '📁'},
+            {'key': 'general', 'label': '通用', 'icon': '📋'},
+            {'key': 'analysis', 'label': '数据分析', 'icon': '📊'},
+            {'key': 'automation', 'label': '自动化', 'icon': '⚙️'},
+            {'key': 'integration', 'label': '集成', 'icon': '🔗'},
+            {'key': 'data', 'label': '数据处理', 'icon': '🗃️'},
+            {'key': 'content', 'label': '内容创作', 'icon': '✍️'},
+            {'key': 'customer', 'label': '客户服务', 'icon': '💬'},
         ]
         return jsonify(code=200, data=categories)
 

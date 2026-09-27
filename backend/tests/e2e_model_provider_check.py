@@ -38,7 +38,17 @@ class ModelProviderEndpointsTest(unittest.TestCase):
 
         cls.app = flask_app_mod.app
         cls.app.config['TESTING'] = True
+        # TESTING 会让全局鉴权闸门自动放行（其他 E2E 文件都假定接口无需登录），
+        # 这个文件要验证“未登录必须 401”，所以在这里把闸门显式打开。
+        cls.app.config['REQUIRE_LOGIN_FOR_API'] = 'strict'
         cls.client = cls.app.test_client()
+
+        # 模型相关接口已加 @login_required（2026-09 密钥明文泄露加固），
+        # 测试需要带上 token；拿不到 token 时后面的用例会以 401 失败并提示。
+        import e2e_auth_helper
+        cls.auth_header = e2e_auth_helper.get_auth_header(verbose=True)
+        if not cls.auth_header:
+            print('\n[setUpClass] 警告：未能获取访问令牌，受保护接口用例将失败')
 
         # 写入种子数据
         try:
@@ -72,18 +82,68 @@ class ModelProviderEndpointsTest(unittest.TestCase):
             print(f"\n[tearDownClass] 清理失败（不影响测试结果）: {e}")
 
     def _get(self, url, params=None):
-        return self.client.get(url, query_string=params or {})
+        return self.client.get(url, query_string=params or {}, headers=self.auth_header)
 
     def _post(self, url, data=None):
         return self.client.post(url, json=data or {},
-                                content_type='application/json')
+                                content_type='application/json',
+                                headers=self.auth_header)
 
     def _put(self, url, data=None):
         return self.client.put(url, json=data or {},
-                               content_type='application/json')
+                               content_type='application/json',
+                               headers=self.auth_header)
 
     def _delete(self, url):
-        return self.client.delete(url)
+        return self.client.delete(url, headers=self.auth_header)
+
+    def test_00_anonymous_access_rejected(self):
+        """未带 token 不得读到模型配置与明文 API Key（安全基线）"""
+        for url in ('/api/model-configs',
+                    '/api/model-providers',
+                    '/api/model-providers/installed',
+                    '/api/model-configs/1/decrypt'):
+            resp = self.client.get(url)   # 故意不加 headers
+            self.assertEqual(resp.status_code, 401,
+                             f'{url} 匿名访问应 401，实际 {resp.status_code}')
+            self.assertNotIn('sk-', str(resp.data)[:400],
+                             f'{url} 不应在未登录时泄露密钥内容')
+
+    def test_00b_global_guard_covers_unannotated_routes(self):
+        """全局闸门要能拦住“路由函数自己没贴 @login_required”的接口
+
+        /api/users 与 /api/conversations 就是典型：历史上它们裸着，
+        未登录就能拿到用户列表与对话内容。这里钉住它们，防止日后重装时静默退化。
+        """
+        for url in ('/api/users', '/api/conversations', '/api/agents'):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 401,
+                             f'{url} 应被全局闸门拦住，实际 {resp.status_code}')
+        # 设计上公开的入口不能被误锁
+        for url in ('/api/health', '/api/model-types', '/api/register-config'):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200,
+                             f'{url} 属公开入口，不应被闸门拦住 ({resp.status_code})')
+
+    def test_00c_third_party_callbacks_are_not_gated(self):
+        """回调/入站类接口必须保持匿名可达
+
+        这些请求来自第三方系统的浏览器回跳或直接 POST，物理上无法携带
+        Authorization 头；一旦被闸门拦下，故障发生在对接方，排查成本极高。
+        它们的安全靠 URL 里的 key/token 在 handler 内部校验。
+        """
+        cases = (
+            '/api/webhooks/trigger/nonexistent-key-xyz',   # 入站 Webhook，key 即凭证
+            '/api/tools/oauth/callback?code=x&state=y',    # 工具 OAuth 回跳
+            '/api/oauth/callback/deadbeef',                # 登录类 OAuth 回跳
+            '/api/web-agent/not-a-real-token',             # Web 访问点
+            '/api/share/chat/not-a-real-token/info',       # 分享页
+        )
+        for url in cases:
+            resp = self.client.get(url)
+            self.assertNotEqual(
+                resp.status_code, 401,
+                f'{url} 被鉴权闸门误锁（401）——回调类接口必须写进 api_guard 豁免名单')
 
     # ============================================================
     # 测试 1: 获取所有供应商列表

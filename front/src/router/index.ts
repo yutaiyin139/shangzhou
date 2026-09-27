@@ -1,6 +1,7 @@
 /* ============ 熵舟·智能体工作台 —— 路由配置 ============ */
 import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router'
-import { isAuthenticated } from '../api/client'
+import { isAuthenticated, getAuthRole, getLoginUser } from '../api/client'
+import { resolvePageTitle, navLabelByPath, toast } from '../utils/global'
 
 /** 路由 meta 扩展 */
 declare module 'vue-router' {
@@ -8,6 +9,8 @@ declare module 'vue-router' {
     public?: boolean
     requiresAuth?: boolean
     roles?: string[]
+    /** 页面名；侧边导航没覆盖到的路由可在此登记（AppShell 面包屑也会读它） */
+    title?: string
   }
 }
 
@@ -93,17 +96,16 @@ router.beforeEach((to, from, next) => {
     }
     // 3. 角色权限检查
     if (to.meta.roles && to.meta.roles.length > 0) {
-      // 从 sessionStorage 获取用户角色
-      try {
-        const userStr = sessionStorage.getItem('loginUser')
-        const user = userStr ? JSON.parse(userStr) : null
-        const userRole = user ? (user.role || '') : ''
-        if (!to.meta.roles.includes(userRole)) {
-          // 权限不足，跳转到首页（或可以添加 403 页面）
-          return next('/home')
-        }
-      } catch (e) {
-        return next('/login')
+      /* 角色以服务端签发的 token 载荷为准，loginUser 只作兜底：
+         以前只读 sessionStorage.loginUser.role，而它会被 /api/me 覆盖、也会在新标签页里缺失，
+         一旦没取到 role，管理员就被静默弹回 /home —— 没有提示也没有报错，
+         而侧边栏那 4 个“平台管理”项照常渲染，看上去就是“系统设置点不动”。 */
+      const userRole = (getAuthRole() || (getLoginUser()?.role || '')).toLowerCase()
+      const allowed = (to.meta.roles as string[]).some(r => String(r).toLowerCase() === userRole)
+      if (!allowed) {
+        // 明确告知被拒，否则用户只会觉得“菜单坏了”
+        toast(`无权限访问「${navLabelByPath(to.path) || to.path}」，已返回工作台`)
+        return next('/home')
       }
     }
     return next()
@@ -111,6 +113,17 @@ router.beforeEach((to, from, next) => {
 
   // 4. 其他路由直接放行
   next()
+})
+
+// ============================================================
+// 标签页标题（每次导航完都复位，避免离开详情页后标题粘住）
+//
+// 详情类页面仍会在数据回来后自己设成「<资源名> - …」；它在导航之后执行，
+// 不会被这里刷掉。
+// ============================================================
+router.afterEach((to) => {
+  const metaTitle = (to.meta && (to.meta.title as string | undefined)) || undefined
+  document.title = resolvePageTitle(to.path, metaTitle)
 })
 
 export default router

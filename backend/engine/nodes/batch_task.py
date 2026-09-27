@@ -170,10 +170,23 @@ def _batch_task_code(context, task_config):
         if isinstance(v, (str, int, float)):
             code = code.replace('{{' + k + '}}', str(v))
 
-    from utils.sandbox import run_sandboxed_code
-    result = run_sandboxed_code(code, language=code_language, timeout=30)
+    # 沙箱对外只提供 execute_code_safely（仅 python），以前引的 run_sandboxed_code 从未存在过，
+    # 一调用就是 ImportError；它的成功返回里也没有 output 键，要取 stdout / result。
+    from utils.sandbox import execute_code_safely
+    if code_language and code_language not in ('python3', 'python'):
+        return {'output': '', 'error': '批量代码任务目前只支持 python3，收到：%s' % code_language}
 
-    return {'output': result.get('output', '')}
+    result = execute_code_safely(code, timeout=30)
+    if not result.get('success'):
+        return {'output': '', 'error': result.get('error') or result.get('stderr') or '代码执行失败'}
+
+    # 项目约定以变量 result 作为输出（与 code 节点一致），stdout 只作兜底
+    output = ''
+    if result.get('result') is not None:
+        output = str(result['result'])
+    elif result.get('stdout'):
+        output = result['stdout']
+    return {'output': output}
 
 
 def _batch_task_http(context, task_config):

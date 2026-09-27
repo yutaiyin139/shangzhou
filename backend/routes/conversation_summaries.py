@@ -5,6 +5,8 @@ import uuid
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
+from utils.helpers import _safe_uid
+
 from models.tables import CONVERSATION_SUMMARIES_TABLE_SQL
 from config import get_db
 from utils.auth import login_required
@@ -213,7 +215,7 @@ def create_summary(conversation_id):
                         summary_id,
                         conversation_id,
                         body.get('app_id', ''),
-                        request.user_id or '',
+                        _safe_uid(None),
                         summary_text,
                         len(messages),
                         start_msg_id,
@@ -294,7 +296,7 @@ def auto_summarize(conversation_id):
                         summary_id,
                         conversation_id,
                         body.get('app_id', ''),
-                        request.user_id or '',
+                        _safe_uid(None),
                         summary_text,
                         len(messages_to_compress),
                         messages_to_compress[0].get('id', ''),

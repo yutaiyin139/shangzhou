@@ -75,11 +75,10 @@
           </div>
           <div class="form-item">
             <div class="form-label">角色</div>
+            <!-- 只留占位项：真正的选项由 loadRoleOptions() 从 /api/roles 拉回来整块重建，
+                 写死“管理员/普通用户/访客”永远不会被看到，只会与实际角色不一致 -->
             <select class="form-sel" id="f-role">
               <option value="">请选择角色</option>
-              <option>管理员</option>
-              <option>普通用户</option>
-              <option>访客</option>
             </select>
           </div>
         </div>
@@ -100,11 +99,8 @@
         <div class="modal-body">
           <div class="form-item" style="margin-bottom:6px">
             <div class="form-label">角色</div>
-            <select class="form-sel" id="sr-role">
-              <option>管理员</option>
-              <option>普通用户</option>
-              <option>访客</option>
-            </select>
+            <!-- 同上：选项由 loadRoleOptions() 从 /api/roles 加载，不写死 -->
+            <select class="form-sel" id="sr-role"></select>
           </div>
         </div>
         <div class="modal-foot">
@@ -150,6 +146,9 @@ onMounted(function(){
   var API = '';
   var tbody = document.getElementById('user-tbody');
   var cbxAll = document.getElementById('cbx-all');
+
+  /* 角色名/账号名都是管理员可改的自由文本，拼 innerHTML 前必须转义 */
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   
   /* 页内标签跳转（使用 router.push 确保导航可靠） */
   document.getElementById('tab-roles').addEventListener('click', function(){ window.location.hash = '#/roles'; });
@@ -181,11 +180,11 @@ onMounted(function(){
         var roleName = u.role_name || '未分配';
         tr.innerHTML =
           '<td><input type="checkbox" class="cbx"></td>' +
-          '<td>' + (u.username || '') + '</td>' +
-          '<td>' + (u.nickname || '') + '</td>' +
-          '<td><span class="tag tag-blue role-cell">' + roleName + '</span></td>' +
+          '<td>' + esc(u.username) + '</td>' +
+          '<td>' + esc(u.nickname) + '</td>' +
+          '<td><span class="tag tag-blue role-cell">' + esc(roleName) + '</span></td>' +
           '<td><span class="st"><span class="st-dot"></span>' + (u.status === 1 ? '启用' : '禁用') + '</span></td>' +
-          '<td>' + (u.created_at || '') + '</td>' +
+          '<td>' + esc(u.created_at) + '</td>' +
           '<td><div class="op-col">' +
             '<button class="link row-set-role">设置角色</button>' +
             '<button class="link link-red row-del">移除</button>' +

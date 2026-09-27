@@ -108,10 +108,12 @@ onMounted(function(){
       }
       sending = false;
       scroll.scrollTop = scroll.scrollHeight;
-    }).catch(function(){
+    }).catch(function(err){
       b.classList.remove('loading');
       b.classList.add('err');
-      b.textContent = '网络异常，请稍后重试';
+      /* 后端会把真实原因放在 code!=200 的 msg 里（apiPost 已将其 throw 出来），
+         不能笼统显示成“网络异常”，否则模型侧报错永远看不到。*/
+      b.textContent = '⚠ ' + ((err && err.message) ? err.message : '网络异常，请稍后重试');
       sending = false;
     });
   }

@@ -29,11 +29,41 @@ logger = get_logger(__name__)
 
 # 从环境变量读取密钥，缺省时使用随机值（每次重启失效，生产环境必须设置）
 # 安全加固：生成持久化密钥文件，避免每次重启失效
+#
+# 占位符/弱密钥黑名单：以前只要 .env 里写了 JWT_SECRET 就直接拿来签名，
+# 而仓库里长期存的是 `your_jwt_secret_here_min_32_chars` 这种示例值，
+# 等于用公开密钥签发 token，任何人都能伪造 admin 身份。见到这些值一律拒用。
+_PLACEHOLDER_SECRETS = {
+    'your_jwt_secret_key_change_this_in_production',
+    'your_jwt_secret_here_min_32_chars',
+    'your-256-bit-secret',
+    'changeme',
+    'change_me',
+    'jwt_secret',
+    'secret',
+}
+
+
+def _is_placeholder_secret(raw):
+    """判断一个 JWT 密钥是不是占位符 / 短到不足以签名"""
+    value = (raw or '').strip().lower()
+    if not value:
+        return True
+    if value in _PLACEHOLDER_SECRETS:
+        return True
+    if any(w in value for w in ('change_this', 'change-this', 'placeholder', 'your_jwt', 'todo')):
+        return True
+    return len(value) < 32
+
+
 def _load_jwt_secret():
-    """加载 JWT 密钥，优先级：环境变量 > 密钥文件 > 生成并持久化"""
+    """加载 JWT 密钥，优先级：环境变量（须非占位符且足够长）> 密钥文件 > 生成并持久化"""
     env_key = os.getenv('JWT_SECRET')
-    if env_key:
+    if env_key and not _is_placeholder_secret(env_key):
         return env_key
+    if env_key:
+        logger.warning('忽略 .env 里的占位符/弱 JWT_SECRET（长度 %d），改用本地密钥文件里的随机密钥；'
+                       '已有的登录态会因此失效，重新登录即可', len(env_key.strip()))
     # 尝试从密钥文件读取
     secret_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.jwt_secret')
     if os.path.exists(secret_file):
@@ -187,11 +217,16 @@ def refresh_access_token(refresh_token):
     payload, error = verify_token(refresh_token, expected_type=TOKEN_TYPE_REFRESH)
     if error:
         return None, error
-    # 安全加固：从数据库重新查询用户信息，保留完整身份
+    # 安全加固：从数据库重新查用户信息（含角色），不把旧声明直接续期
     user_info = _get_user_by_id(payload['user_id'])
-    email = user_info.get('email', '') if user_info else payload.get('email', '')
-    username = user_info.get('name', '') if user_info else payload.get('username', '')
-    role = user_info.get('role', '') if user_info else payload.get('role', '')
+    if user_info is None:
+        # 查不到行 = 账号已不存在；查库异常时 user_info 也为 None，下面按旧声明降级。
+        # 但“已禁用”必须拦住：/api/users DELETE 与封禁只改 status='banned'，
+        # 登录会拒，可要是刷新不拦，一个被禁的账号能靠 refresh token 无限续命。
+        return None, '账号不存在或状态不可用，请重新登录'
+    email = user_info.get('email', '') or payload.get('email', '')
+    username = user_info.get('name', '') or payload.get('username', '')
+    role = user_info.get('role', '') or payload.get('role', '')
     # 生成新的 Token 对（Refresh Token 轮转）
     return generate_token_pair(
         user_id=payload['user_id'],
@@ -202,16 +237,28 @@ def refresh_access_token(refresh_token):
 
 
 def _get_user_by_id(user_id):
-    """根据用户 ID 查询用户信息（用于刷新 Token 时恢复身份）"""
+    """按账号 id 取刷新 Token 时要恢复的身份（name/email/status/role）。
+
+    role 不在 dify_accounts 表里（那张表只有账号基本信息），它在 user_roles 角联表；
+    以前这里直接 `SELECT id, name, email, role FROM dify_accounts` —— 没有 role 列，
+    语句每次报错进异常分支、返 None，于是刷新时“从库里恢复身份”这条路从未生效过，
+    始终在用旧 access token 里的声明（改了角色也不生效，日志里还在刷 exception）。
+    """
     try:
         from config import get_db
         db = get_db()
         try:
             cur = db.cursor()
-            cur.execute(r'SELECT id, name, email, role FROM dify_accounts WHERE id = %s', (user_id,))
-            return cur.fetchone()
+            cur.execute(r'SELECT id, name, email, status FROM dify_accounts WHERE id = %s', (user_id,))
+            row = cur.fetchone()
         finally:
             db.close()
+        if not row:
+            return None
+        if (row.get('status') or 'active') != 'active':
+            return None
+        row['role'] = get_account_role(row['id'])['level']
+        return row
     except Exception:
         logger.exception('查询用户信息失败 (user_id=%s)，刷新 Token 身份恢复将回退到旧声明', user_id)
         return None
@@ -459,61 +506,96 @@ def is_token_revoked(token):
 
 
 # ============================================================
+# 角色判定（全后端唯一出处）
+# ============================================================
+
+ADMIN_ROLE_NAME = 'admin'
+
+
+def get_account_role(user_id):
+    """账号角色 -> {'role_name': 展示用名称（多角色拼接）, 'level': 'admin' | 'user'}。
+
+    level 只认角色名恰好等于 'admin'。不要改成 'admin' in name 或 '管理员' in name
+    这种子串猜测：roles 表里同时存在历史遗留的中文角色（运维管理员 / 业务管理员 /
+    普通用户）和代码种的 admin / user，按子串猜会把“业务管理员”也提成 admin；
+    而 request.user['role'] == 'admin' 是 api_guard / ownership / 前端路由共用的
+    “管理员”凭据（跳过了归属校验），多给一个人 admin 就是真越过权限。
+
+    GROUP_CONCAT 带 ORDER BY、先聚后判，避免“多角色时 LIMIT 1 取哪个不确定”。
+    查不到角色就是普通用户（不抛异常）。
+    """
+    names, is_admin = '', False
+    try:
+        from config import get_db
+        db = get_db()
+        try:
+            cur = db.cursor()
+            cur.execute(r'''
+                SELECT GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR ', ') AS role_name,
+                       MAX(r.name = %s) AS is_admin
+                FROM user_roles ur
+                JOIN roles r ON r.id = ur.role_id
+                WHERE ur.user_id = %s
+            ''', (ADMIN_ROLE_NAME, user_id))
+            row = cur.fetchone() or {}
+            names = (row.get('role_name') or '').strip()
+            is_admin = bool(row.get('is_admin'))
+        finally:
+            db.close()
+    except Exception:
+        logger.exception('读取账号角色失败 (user_id=%s)，按普通用户处理', user_id)
+    return {'role_name': names, 'level': ADMIN_ROLE_NAME if is_admin else 'user'}
+
+
+def is_admin_account(user_id):
+    """该账号是否 admin 角色（只看角色名 == 'admin'，判定口径见 get_account_role）"""
+    return get_account_role(user_id)['level'] == ADMIN_ROLE_NAME
+
+
+def platform_admin_required(f):
+    """平台管理面（用户 / 角色 / 权限矩阵的读写）专用：管理员判定**实时查库**。
+
+    与 role_required('admin') 的差别只在“信哪一份 role”：后者读 access token 里的载荷，
+    有效期 2h —— 被降权、被封禁的账号在令牌过期前仍能建号、改任何人的密码、删角色，
+    而这几条接口等价于接管平台，不能拿一个旧令牌就放行。
+
+    api_guard 只在闸门开着时才填 request.user，闸门为 off（测试 / 本地）时这里自己从令牌解，
+    不依赖闸门装载。
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = getattr(request, 'user', None) or get_current_user()
+        uid = str((user or {}).get('user_id') or '').strip()
+        if not uid:
+            return jsonify(code=401, msg='请先登录'), 401
+        if not is_admin_account(uid):
+            return jsonify(code=403, msg='需要管理员权限'), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ============================================================
 # 资源级 RBAC（对齐 Dify 权限矩阵）
 # ============================================================
 
 def user_has_permission(user_id, permission_code):
+    """检查用户是否拥有指定权限点。
+
+    以前这里与 check_user_permission 各写一份同一件事：两个都是“admin 全权 +
+    查 role_permissions”，但本函数是先 LIMIT 1 取一个角色名、再按角色名去连
+    role_permissions，多角色账号命中哪个角色不确定，同名角色也会被合并算。
+    现在只留一份实现（按 user_roles 直接连权限表），本函数保留同名入口供外部调用。
     """
-    检查用户是否拥有指定权限点。
-
-    逻辑：admin 角色自动拥有所有权限；其他角色查询 role_permissions 表。
-
-    参数:
-        user_id: 用户 ID
-        permission_code: 权限标识（如 'app:create', 'dataset:delete'）
-
-    返回:
-        bool
-    """
-    from config import get_db
-    db = get_db()
-    try:
-        cur = db.cursor()
-        # 获取用户角色
-        cur.execute(
-            r'''SELECT r.name FROM roles r
-                JOIN user_roles ur ON ur.role_id = r.id
-                WHERE ur.user_id = %s LIMIT 1''',
-            (user_id,))
-        row = cur.fetchone()
-        if not row:
-            return False
-        role_name = row['name']
-        # admin 拥有所有权限
-        if role_name == 'admin':
-            return True
-        # 查询权限表
-        cur.execute(
-            r'''SELECT COUNT(*) as cnt FROM role_permissions rp
-                JOIN roles r ON r.id = rp.role_id
-                JOIN permissions p ON p.id = rp.permission_id
-                WHERE r.name = %s AND p.code = %s''',
-            (role_name, permission_code))
-        result = cur.fetchone()
-        return (result['cnt'] or 0) > 0
-    except Exception:
-        logger.exception('查询用户权限失败 (user_id=%s, permission=%s)，按无权限处理', user_id, permission_code)
-        return False
-    finally:
-        db.close()
+    return check_user_permission(user_id, permission_code)
 
 
 def check_dataset_permission(dataset_id, user_id, required='read'):
     """
     检查用户对知识库的权限（单租户工作区模型）。
 
-    实际 schema 说明：dify_datasets 没有 owner 列（只有 created_by），
-    且不存在 dify_dataset_permissions 表。因此按以下模型判定：
+    实际 schema 说明：dify_datasets 没有 owner 列（只有 created_by）；
+    dify_dataset_permissions 虽在 models/tables.py 里有定义，但全仓没有任何读写它的
+    代码（新部署会被建出来，永远是一张空表）。因此按以下模型判定：
 
     权限级别: read < write < admin
     - 读：工作区内任意登录用户（与知识库列表接口一致，列表亦未按属主过滤）
@@ -535,16 +617,10 @@ def check_dataset_permission(dataset_id, user_id, required='read'):
         # 读权限：工作区内所有登录成员可见
         if required == 'read':
             return True
-        # 写/管理：创建者或管理员
+        # 写/管理：创建者或 admin 角色
         if str(ds.get('created_by') or '') == str(user_id):
             return True
-        cur.execute(
-            r'''SELECT r.name FROM roles r
-                JOIN user_roles ur ON ur.role_id = r.id
-                WHERE ur.user_id = %s LIMIT 1''',
-            (user_id,))
-        role_row = cur.fetchone()
-        return bool(role_row and role_row['name'] == 'admin')
+        return is_admin_account(user_id)
     except Exception:
         logger.exception('检查知识库权限失败 (dataset_id=%s, user_id=%s)，按无权限处理', dataset_id, user_id)
         return False
@@ -579,16 +655,7 @@ def check_app_access(app_id, user_id):
         # published 应用可读
         if app.get('status') == 'published':
             return True
-        # 检查 admin
-        cur.execute(
-            r'''SELECT r.name FROM roles r
-                JOIN user_roles ur ON ur.role_id = r.id
-                WHERE ur.user_id = %s LIMIT 1''',
-            (user_id,))
-        role_row = cur.fetchone()
-        if role_row and role_row['name'] == 'admin':
-            return True
-        return False
+        return is_admin_account(user_id)
     except Exception:
         logger.exception('检查应用访问权限失败 (app_id=%s, user_id=%s)，按无权限处理', app_id, user_id)
         return False
@@ -717,21 +784,11 @@ def check_resource_permission(resource_type, resource_id, user_id, required='rea
             if resource.get(registry['status_field']) == registry['published_value']:
                 return True
 
-        # 数据集走独立权限表
+        # 知识库另有创建者/登录成员模型（本表无 dataset 级权限表），走它自己的判定
         if resource_type == 'dataset':
             return check_dataset_permission(resource_id, user_id, required)
 
-        # 检查 admin 角色
-        cur.execute(
-            r'''SELECT r.name FROM roles r
-                JOIN user_roles ur ON ur.role_id = r.id
-                WHERE ur.user_id = %s LIMIT 1''',
-            (user_id,))
-        role_row = cur.fetchone()
-        if role_row and role_row['name'] == 'admin':
-            return True
-
-        return False
+        return is_admin_account(user_id)
     except Exception:
         logger.exception('检查资源权限失败 (resource_type=%s, resource_id=%s, user_id=%s)，按无权限处理', resource_type, resource_id, user_id)
         return False
@@ -784,9 +841,10 @@ def resource_permission_required(resource_type, resource_id_param, permission='r
 
 def check_user_permission(user_id, permission_code):
     """
-    检查用户是否拥有指定权限码。
+    检查用户是否拥有指定权限码（权限判定的唯一实现）。
 
-    通过 roles → role_permissions → permissions 链式查询。
+    通过 roles → role_permissions → permissions 链式查询，直接按 user_roles 连，
+    多角色账号只要有一个角色有这个权限点就算有。
 
     Args:
         user_id: 用户 ID
@@ -800,13 +858,7 @@ def check_user_permission(user_id, permission_code):
     try:
         cur = db.cursor()
         # 检查 admin 角色
-        cur.execute(
-            r'''SELECT r.name FROM roles r
-                JOIN user_roles ur ON ur.role_id = r.id
-                WHERE ur.user_id = %s LIMIT 1''',
-            (user_id,))
-        role_row = cur.fetchone()
-        if role_row and role_row['name'] == 'admin':
+        if is_admin_account(user_id):
             return True
         # 检查具体权限码
         cur.execute(

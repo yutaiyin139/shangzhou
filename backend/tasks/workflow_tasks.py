@@ -21,7 +21,10 @@ import sys
 import json
 import time
 import uuid
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # 确保 backend 目录在 sys.path 中
 _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -442,6 +445,91 @@ def _publish_progress(run_id, data):
         r.setex(f'wf:status:{run_id}', 3600, json.dumps(data, ensure_ascii=False))
     except Exception:
         pass
+
+
+def _write_batch_run(batch_id, status, outputs, success, fail, error_message=None, total=None):
+    """回写批次状态与计数（输出随进度一起写，便于前端轮询看到进行中状态）。"""
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    db = get_db()
+    try:
+        cur = db.cursor()
+        cur.execute(
+            r'UPDATE workflow_batch_runs SET status = %s, success_count = %s, fail_count = %s, '
+            r'output_data_json = %s, error_message = %s, updated_at = %s'
+            + (r', total_count = %s' if total is not None else '')
+            + r' WHERE id = %s',
+            ((success, fail,
+              json.dumps(outputs, ensure_ascii=False) if outputs else None,
+              error_message, now)
+             + ((total,) if total is not None else ())
+             + (batch_id,)))
+        db.commit()
+    except Exception as e:
+        logger.warning('回写批次 %s 状态失败: %s', batch_id, str(e)[:200])
+        db.rollback()
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, name='tasks.workflow_tasks.execute_batch_run',
+                 queue='workflow', max_retries=1, default_retry_delay=10)
+def execute_batch_run(self, batch_id):
+    """执行一个批次（workflow_batch_runs 表的一行）。
+
+    POST /api/workflows/<app_id>/batch-run/<batch_id>/start 一直在引用本任务，但它从未被
+    定义过；加上调用处 except: pass，结果是批次被标成 running 却永无人跑。
+
+    约定：input_data_json 是一个数组，每个元素是一次运行的 inputs（非 dict 则包装成 {'input': ...}）；
+    输出按同序写回 output_data_json，计数列用于列表页进度展示。
+    """
+    from engine.workflow_runner import run_workflow
+
+    db = get_db()
+    try:
+        cur = db.cursor()
+        cur.execute(r'SELECT * FROM workflow_batch_runs WHERE id = %s', (batch_id,))
+        row = cur.fetchone()
+    finally:
+        db.close()
+    if not row:
+        return {'batch_id': batch_id, 'error': '批次不存在'}
+
+    app_id = row['app_id']
+    account = row.get('account_id') or 'szagent-user'
+    try:
+        items = json.loads(row.get('input_data_json') or '[]')
+    except Exception as e:
+        _write_batch_run(batch_id, 'error', [], 0, 0, '输入数据不是合法 JSON: %s' % str(e)[:300])
+        return {'batch_id': batch_id, 'error': '输入数据非法'}
+    if not isinstance(items, list) or not items:
+        _write_batch_run(batch_id, 'error', [], 0, 0, '输入数据为空或不是数组')
+        return {'batch_id': batch_id, 'error': '输入数据为空'}
+
+    outputs, success, fail = [], 0, 0
+    for idx, item in enumerate(items):
+        inputs = item if isinstance(item, dict) else {'input': item}
+        try:
+            result = run_workflow(app_id, inputs, user=account) or {}
+            # run_workflow 的状态字段是 succeeded/failed/waiting/stopped，不是 success
+            if result.get('status') == 'succeeded':
+                success += 1
+                outputs.append({'index': idx, 'inputs': inputs, 'status': 'succeeded',
+                                'outputs': result.get('outputs', {})})
+            else:
+                fail += 1
+                outputs.append({'index': idx, 'inputs': inputs,
+                                'status': result.get('status') or 'failed',
+                                'error': str(result.get('error') or '')[:500]})
+        except Exception as e:
+            fail += 1
+            outputs.append({'index': idx, 'inputs': inputs, 'status': 'error', 'error': str(e)[:500]})
+            logger.warning('批次 %s 第 %s 条执行失败: %s', batch_id, idx, str(e)[:200])
+        _write_batch_run(batch_id, 'running', outputs, success, fail, None, total=len(items))
+
+    final = 'completed' if success > 0 else 'error'
+    _write_batch_run(batch_id, final, outputs, success, fail,
+                     None if fail == 0 else ('%s 条失败，详见输出' % fail), total=len(items))
+    return {'batch_id': batch_id, 'total': len(items), 'success': success, 'fail': fail}
 
 
 def get_workflow_task_status(task_id):

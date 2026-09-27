@@ -85,7 +85,7 @@
 <script setup>
 import { ref, computed, onMounted, onDeactivated } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { toast, openModal, closeModal, getLoginUser, EMPTY_SVG } from '../utils/global'
+import { toast, openModal, closeModal, EMPTY_SVG } from '../utils/global'
 import { apiGet, apiPost } from '../api/client'
 
 const templates = ref([])
@@ -253,11 +253,10 @@ async function createFromTpl() {
   if (creating.value) return
   const name = form.value.name.trim() || selectedTpl.value.name
   const description = form.value.description.trim() || selectedTpl.value.description || ''
-  const loginUser = getLoginUser()
-  const uid = loginUser ? (loginUser.account_id || loginUser.id || '') : ''
   creating.value = true
   try {
-    const res = await apiPost('/api/app-templates/' + encodeURIComponent(selectedTpl.value.id) + '/create', { name, description }, { params: { uid } })
+    /* 不传 uid：新应用归属哪个工作区由登录 token 里的账号决定（后端 _safe_uid 只认 token） */
+    const res = await apiPost('/api/app-templates/' + encodeURIComponent(selectedTpl.value.id) + '/create', { name, description })
     if (res.data && res.data.id) {
       closeModal('tplModal')
       toast('创建成功')

@@ -5,6 +5,7 @@
  * commit 机制等公共能力。
  */
 import { ref, computed, watch, onMounted } from 'vue'
+import { apiGet } from '../../../api/client'
 
 /** 节点数据 selector 解析辅助 */
 export function parseSelector(selector: string): string[] {
@@ -70,18 +71,89 @@ export function usePanelState(props: { node: any }, emit: any) {
     return (m.provider || '') + '::' + (m.model_name || '')
   }
 
+  /** 节点里已存的模型 → 下拉 value（provider 存的是 langgenius/x/x，要削成短名才能和 option 对上） */
+  function storedModelKey() {
+    const m = local.value.model || {}
+    const short = shortProvider(m.provider)
+    return short && m.name ? (short + '::' + m.name) : ''
+  }
+
+  /**
+   * 把下拉选中的 key 写回节点数据。
+   *
+   * 以前只有 commitModel() 一条路，而它读的是 modelKey.value —— 但 modelKey 是个
+   * `set: () => {}` 的只读 computed，v-model 的写入被静默吞掉，于是“选了任何模型”
+   * 都等于把旧值原样写回去，5 个用模型下拉的面板（LLM/Agent/批量任务/参数提取/问题分类）
+   * 全部选不上。现在 setter 与 commitModel 都走这里，谁先谁后结果一致。
+   */
+  function applyModelKey(key: string) {
+    if (!local.value.model) local.value.model = {}
+    if (!key) {
+      local.value.model.provider = ''
+      local.value.model.name = ''
+    } else {
+      const idx = key.indexOf('::')
+      if (idx === -1) return
+      local.value.model.provider = formatProvider(key.slice(0, idx))
+      local.value.model.name = key.slice(idx + 2)
+      // mode 不再无条件写死 'chat'：节点原有 mode（如 completion）不能被一次改选丢掉
+      local.value.model.mode = local.value.model.mode || 'chat'
+    }
+    if (!local.value.model.completion_params) local.value.model.completion_params = {}
+    commit()
+  }
+
   const modelKey = computed({
     get: () => {
+      const key = storedModelKey()
       const m = local.value.model || {}
-      const short = shortProvider(m.provider)
-      const key = short && m.name ? (short + '::' + m.name) : ''
       if (key && !models.value.some((mo: any) => modelOptionKey(mo) === key)) {
-        const alt = models.value.find((mo: any) => mo.provider === short && mo.model_name === m.name)
+        const alt = models.value.find((mo: any) => mo.provider === shortProvider(m.provider) && mo.model_name === m.name)
         if (alt) return modelOptionKey(alt)
       }
       return key
     },
-    set: () => {}
+    set: (val: string) => { applyModelKey(val || '') }
+  })
+
+  /**
+   * 下拉选项列表。
+   *
+   * 两点都不是可有可无的修饰：
+   * 1) 节点里存的模型可能根本不在已配置列表里（模板应用常带 openai/gpt-5 这种没接入的），
+   *    这时 <select> 找不到匹配 option 会把整个框渲染成**空白**，看起来像“没有可选项/控件坏了”。
+   *    所以把当前值补一项并标注未配置，让用户看见现状、也能直接改选。
+   * 2) 同一个 provider + model_name 可以配多条凭据（不同 key / 不同 base_url），
+   *    但图里只能存 provider + name + mode，区分不了凭据。按凭据逐条列出会产生
+   *    **重复 value**，<select> 选完会跳回首个同值项（点 A 显示 B）→ 按 key 去重，
+   *    标签用厂商/模型名而不是凭据名，与图里实际能存下的信息一致。
+   * 3) 只列可对话的模型：model_configs 里混着 embedding / rerank 等类型，
+   *    它们出现在 LLM 类节点的下拉里选了也不报错，要到运行期才炸。
+   *    （只在这个选项列表里过滤，models 仍是后端返回的完整列表。）
+   */
+  const modelChoices = computed(() => {
+    const CHAT_TYPES = ['llm', 'chat', '']
+    const seen = new Set<string>()
+    const list: { key: string; label: string }[] = []
+    for (const m of models.value) {
+      if (!CHAT_TYPES.includes(String(m.model_type || '').toLowerCase())) continue
+      const key = modelOptionKey(m)
+      if (seen.has(key)) continue
+      seen.add(key)
+      list.push({
+        key,
+        label: (m.provider_label || m.provider) + ' / ' + (m.model_label || m.model_name),
+      })
+    }
+    const cur = storedModelKey()
+    if (cur && !seen.has(cur)) {
+      const m = local.value.model || {}
+      list.unshift({
+        key: cur,
+        label: '（未配置）' + (shortProvider(m.provider) || '?') + ' / ' + (m.name || '?'),
+      })
+    }
+    return list
   })
 
   const temperature = computed({
@@ -131,18 +203,9 @@ export function usePanelState(props: { node: any }, emit: any) {
     }
   })
 
-  function commitModel() {
-    if (!modelKey.value) return
-    const idx = modelKey.value.indexOf('::')
-    if (idx === -1) return
-    const short = modelKey.value.slice(0, idx)
-    const mName = modelKey.value.slice(idx + 2)
-    if (!local.value.model) local.value.model = {}
-    local.value.model.provider = formatProvider(short)
-    local.value.model.name = mName
-    local.value.model.mode = 'chat'
-    if (!local.value.model.completion_params) local.value.model.completion_params = {}
-    commit()
+  function commitModel(chosen?: string) {
+    // 模板里写成 @change="commitModel" 时首参是 Event，退回读 modelKey（v-model 已把新值写进 local）
+    applyModelKey(typeof chosen === 'string' ? chosen : modelKey.value)
   }
 
   function commitPrompt() {
@@ -260,37 +323,33 @@ export function usePanelState(props: { node: any }, emit: any) {
   async function loadMcpTools(serverId: string) {
     if (!serverId) { mcpTools.value = []; return }
     try {
-      const r = await fetch(`/api/mcps/${serverId}/tools`)
-      const res = await r.json()
+      const res = await apiGet<any[]>(`/api/mcps/${serverId}/tools`)
       mcpTools.value = res.code === 200 ? (res.data || []) : []
     } catch (e) { mcpTools.value = [] }
   }
 
   // 加载所有下拉数据
   async function loadAllOptions() {
+    /* 统一走 apiGet：裸 fetch 不带 Authorization，遇到需要登录的接口会 401
+       （/api/knowledge/datasets 就是这样一个已经默默失效的调用） */
     try {
-      const r = await fetch('/api/model-configs')
-      const res = await r.json()
+      const res = await apiGet<any[]>('/api/model-configs')
       if (res.code === 200) models.value = (res.data || []).filter((m: any) => m.status === 1)
     } catch (e) {}
     try {
-      const r = await fetch('/api/knowledge/datasets')
-      const res = await r.json()
+      const res = await apiGet<any[]>('/api/knowledge/datasets')
       if (res.code === 200) datasets.value = res.data || []
     } catch (e) {}
     try {
-      const r = await fetch('/api/tools/builtin')
-      const res = await r.json()
+      const res = await apiGet<any[]>('/api/tools/builtin')
       if (res.code === 200) tools.value = res.data || []
     } catch (e) {}
     try {
-      const r = await fetch('/api/mcps')
-      const res = await r.json()
+      const res = await apiGet<any[]>('/api/mcps')
       if (res.code === 200) mcpServers.value = (res.data || []).filter((s: any) => s.enabled !== 0)
     } catch (e) {}
     try {
-      const r = await fetch('/api/data-sources')
-      const res = await r.json()
+      const res = await apiGet<any[]>('/api/data-sources')
       if (res.code === 200) {
         builtinSources.value = (res.data || []).map((s: any) => ({
           key: s.key, name: s.name, icon: s.icon,
@@ -299,8 +358,7 @@ export function usePanelState(props: { node: any }, emit: any) {
       }
     } catch (e) {}
     try {
-      const r = await fetch('/api/connectors/custom')
-      const res = await r.json()
+      const res = await apiGet<any[]>('/api/connectors/custom')
       if (res.code === 200) connectors.value = res.data || []
     } catch (e) {}
   }
@@ -321,7 +379,7 @@ export function usePanelState(props: { node: any }, emit: any) {
   return {
     local, commit, removeArrayItem,
     models, datasets, builtinSources, connectors, tools, mcpServers, mcpTools,
-    modelKey, temperature, systemPrompt, userPrompt,
+    modelKey, modelChoices, temperature, systemPrompt, userPrompt,
     commitModel, commitPrompt,
     selectedDataset, commitDataset,
     querySelector, commitQuery,

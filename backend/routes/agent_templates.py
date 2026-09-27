@@ -5,6 +5,8 @@ import uuid
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
+from utils.helpers import _safe_uid
+
 from models.tables import (
     AGENT_TEMPLATES_TABLE_SQL,
     CONVERSATION_SUMMARIES_TABLE_SQL,
@@ -98,7 +100,7 @@ def list_templates():
 
     # 公开模板或自己的模板
     where.append(r'(is_public = 1 OR author_id = %s)')
-    params.append(request.user_id or '')
+    params.append(_safe_uid(None))
 
     if category and category != 'all':
         where.append(r'category = %s')
@@ -198,7 +200,7 @@ def create_template():
                         body.get('temperature', 0.7),
                         1 if body.get('is_public', True) else 0,
                         1 if body.get('is_official', False) else 0,
-                        request.user_id or '',
+                        _safe_uid(None),
                         body.get('author_name', ''),
                         'active',
                         now, now,

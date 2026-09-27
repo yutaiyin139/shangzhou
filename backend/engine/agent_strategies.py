@@ -14,9 +14,12 @@ Agent 策略抽象层 —— 对齐 Dify 1.17 agent_v2 运行时
 """
 
 import json
+import logging
 import re
 import time
 from config import get_db
+
+logger = logging.getLogger('szagent.agent_strategies')
 
 
 # ============================================================
@@ -767,20 +770,24 @@ class ConfigRevisionManager:
     """Agent 配置版本管理器"""
 
     @staticmethod
-    def save_revision(agent_id: int, config: dict, strategy: str = '', change_note: str = '', created_by: int = 1):
-        """保存配置快照"""
+    def save_revision(agent_id, config: dict, strategy: str = '', change_note: str = '',
+                      created_by: str = None):
+        """保存配置快照；created_by 存 dify_accounts.id（登录 token 里的 user_id）"""
         db = get_db()
         try:
             cur = db.cursor()
             cur.execute(
                 r'''INSERT INTO agent_config_revisions (agent_id, config_json, strategy, change_note, created_by)
                     VALUES (%s, %s, %s, %s, %s)''',
-                (agent_id, json.dumps(config, ensure_ascii=False), strategy, change_note, created_by)
+                (agent_id, json.dumps(config, ensure_ascii=False), strategy, change_note,
+                 str(created_by) if created_by else None)
             )
             db.commit()
             return cur.lastrowid
-        except Exception:
-            pass
+        except Exception as e:
+            # 以前这里静默 pass：快照一行都没写进去，前端却收到“已保存版本”，
+            # 等到版本列表永远是空才发现。至少留一条日志。
+            logger.warning('保存智能体配置快照失败 (agent_id=%s): %s', agent_id, str(e)[:200])
         finally:
             db.close()
         return None

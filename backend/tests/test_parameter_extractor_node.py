@@ -8,7 +8,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import patch, MagicMock
-from engine.workflow_runner import _node_parameter_extractor, _convert_type
+# 实现已拆到 engine/nodes/parameter_extractor.py
+from engine.nodes.parameter_extractor import _node_parameter_extractor, _convert_type
 
 
 def _make_model_cfg():
@@ -108,8 +109,8 @@ def test_extractor_with_mocked_llm():
         'content': '{"order_id": "ABC123", "product_name": "手机", "quantity": 2, "urgency": "high"}'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -144,8 +145,8 @@ def test_extractor_json_in_code_block():
         'content': '```json\n{"order_id": "XYZ789", "product_name": "", "quantity": null, "urgency": "low"}\n```'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -178,8 +179,8 @@ def test_extractor_missing_required():
         'content': '{"order_id": "", "product_name": "", "quantity": null}'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -215,8 +216,8 @@ def test_extractor_type_conversion():
         'content': '{"count": "10", "price": "99.99", "active": "true"}'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -250,8 +251,8 @@ def test_extractor_custom_output_var():
         'content': '{"order_id": "ABC123", "product_name": "", "quantity": null, "urgency": "low"}'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -284,8 +285,8 @@ def test_extractor_raw_response_included():
         'content': '{"order_id": "TEST123", "product_name": "", "quantity": null, "urgency": "low"}'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -361,8 +362,8 @@ def test_extractor_partial_extraction():
         'content': '{"order_id": "DEF456"}'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.parameter_extractor._call_llm', return_value=mock_response):
+        with patch('engine.nodes.parameter_extractor.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',

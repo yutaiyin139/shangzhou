@@ -560,12 +560,15 @@ def _stage_embed(config, context, dataset_id=None):
 
     embedded_count = 0
     try:
-        from engine.embedding_service import get_embeddings
+        from engine.embedding_service import get_embeddings_batch
         # 批量获取 embedding
         batch_size = 10
         for i in range(0, len(segments), batch_size):
             batch = segments[i:i + batch_size]
-            embeddings = get_embeddings(batch)
+            # 分段可能是字符串也可能是 dict，向量化入参只能是文本；
+            # 嵌入服务对外的批量入口叫 get_embeddings_batch（旧的 get_embeddings 并不存在）
+            texts = [(s.get('content', '') if isinstance(s, dict) else s) for s in batch]
+            embeddings = get_embeddings_batch(texts)
             for j, emb in enumerate(embeddings):
                 if i + j < len(segments):
                     if isinstance(segments[i + j], str):

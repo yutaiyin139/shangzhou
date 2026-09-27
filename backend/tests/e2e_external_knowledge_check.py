@@ -28,12 +28,18 @@ BASE_URL = 'http://127.0.0.1:5000'
 PASS = 0
 FAIL = 0
 
+# 后端已启用全局鉴权闸门（REQUIRE_LOGIN_FOR_API=strict），走 live HTTP 的脚本也必须带 token
+import e2e_auth_helper
+
+AUTH = e2e_auth_helper.get_auth_header()
+
 
 def api(method, path, body=None):
     """调用 API"""
     url = BASE_URL + path
     data = json.dumps(body).encode('utf-8') if body else None
     headers = {'Content-Type': 'application/json'}
+    headers.update(AUTH)
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:

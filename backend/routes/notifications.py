@@ -3,8 +3,9 @@
 
 import json
 import uuid
-from flask import jsonify, request, g
+from flask import jsonify, request
 from config import get_db
+from utils.helpers import _safe_uid
 
 NOTIFICATIONS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS user_notifications (
@@ -42,12 +43,15 @@ def _ensure_table():
 
 
 def _get_user_id():
-    user_id = getattr(g, 'user_id', None)
-    if user_id:
-        return user_id
-    if request.is_json and request.json:
-        return request.json.get('uid', '')
-    return request.args.get('uid', '')
+    """通知中心的身份：只认登录 token 里的 user_id（= dify_accounts.id）。
+
+    两个已经拆掉的写法：
+    - getattr(g, 'user_id', None)：全仓没有任何地方写过 g.user_id，这个分支永远进不了；
+      真正在填 request.user 的是 utils/api_guard.py 的 before_request。
+    - 拿不到就当空串回退到 ?uid= / body.uid：那等于任何人传别人的账号 id 就能读
+      别人通知、把别人通知标已读/清空。
+    """
+    return _safe_uid(None)
 
 
 def register_notification_routes(app):
@@ -155,9 +159,11 @@ def register_notification_routes(app):
     @app.route('/api/notifications', methods=['POST'])
     def create_notification():
         data = request.get_json(silent=True) or {}
-        user_id = data.get('user_id') or _get_user_id()
+        # 只能给自己发：data.user_id 是调用方填的，接受它就等于任意人往任意账号
+        # 的收件箱里写消息（诱导点击类钓鱼）。服务端内部发送请走 app.add_notification。
+        user_id = _get_user_id()
         if not user_id:
-            return jsonify({'code': 400, 'msg': '缺少 user_id', 'data': None})
+            return jsonify({'code': 401, 'msg': '未登录', 'data': None})
         title = data.get('title', '')
         if not title:
             return jsonify({'code': 400, 'msg': '缺少 title', 'data': None})

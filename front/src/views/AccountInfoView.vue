@@ -78,11 +78,14 @@
 
               <!-- API Key 管理 -->
               <div class="section-title" style="margin-top:28px">API Key 管理</div>
-              <div class="apikey-desc">使用 API Key 通过编程方式访问熵舟服务。</div>
+              <div class="apikey-desc">API Key 按应用颁发：选一个自己的应用，用它的 Key 以编程方式调用该应用的接口。</div>
               <div class="apikey-list" id="apikey-list">
                 <div class="apikey-empty">加载中…</div>
               </div>
               <div class="apikey-actions">
+                <select class="form-input" id="apikey-app" style="max-width:260px;margin-right:10px;" title="选择要颁发 API Key 的应用">
+                  <option value="">请选择应用</option>
+                </select>
                 <button class="btn btn-primary" id="btn-create-apikey">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:4px"><path d="M12 5v14M5 12h14"/></svg>
                   创建 API Key
@@ -142,11 +145,13 @@ onMounted(function(){
   
   var API = '';
   var originalData = null;
-  var curUid = (getLoginUser() || {}).id || 1;  // 当前登录用户 id（未登录回退 1）
-  
+  /* 不再往下传 uid：“我是谁”由登录后拿到的 token 决定（后端 _safe_uid 只认 token），
+     以前那个 `(getLoginUser() || {}).id || 1` 的 1 是已废弃的旧 users.id，
+     对不上任何账号，传了也没人看。 */
+
   /* ========== 加载账户信息 ========== */
   function loadAccount(){
-    apiGet('/api/account', { params: { uid: curUid } }).then(function(res){
+    apiGet('/api/account').then(function(res){
       if (res.code !== 200 || !res.data) return;
       var d = res.data;
       originalData = JSON.parse(JSON.stringify(d));
@@ -156,7 +161,8 @@ onMounted(function(){
       document.getElementById('display-role').textContent = d.role_name || '普通用户';
 
       document.getElementById('f-username').value = d.username || '';
-      document.getElementById('f-account-id').textContent = d.account_id || '-';
+      // 接口返回的字段名是 id（没有 account_id），以前取 d.account_id 所以这一行永远是“-”
+      document.getElementById('f-account-id').textContent = d.id || d.account_id || '-';
       document.getElementById('f-email').value = d.email || '';
       document.getElementById('f-phone').value = d.phone || '';
       document.getElementById('f-role').textContent = d.role_name || '-';
@@ -175,7 +181,6 @@ onMounted(function(){
   /* ========== 保存 ========== */
   document.getElementById('btn-save').addEventListener('click', function(){
     var payload = {
-      uid: curUid,
       username: document.getElementById('f-username').value.trim(),
       email: document.getElementById('f-email').value.trim(),
       phone: document.getElementById('f-phone').value.trim()
@@ -189,7 +194,7 @@ onMounted(function(){
         document.getElementById('f-password').value = '';
         /* 同步顶栏登录态 */
         var lu = getLoginUser();
-        if (lu && String(lu.id) === String(curUid)){
+        if (lu){
           lu.username = payload.username; lu.email = payload.email; lu.phone = payload.phone;
           sessionStorage.setItem('loginUser', JSON.stringify(lu));
         }
@@ -245,7 +250,7 @@ onMounted(function(){
     if (newPwd !== confirmPwd){ toast('两次输入的新密码不一致'); return; }
 
     /* 调用后端验证并更新密码 */
-    apiPut('/api/account', { uid: curUid, old_password: oldPwd, password: newPwd }).then(function(res){
+    apiPut('/api/account', { old_password: oldPwd, password: newPwd }).then(function(res){
       document.getElementById('modal-reset-pwd').classList.remove('show');
       var pwdField = document.getElementById('f-password');
       pwdField.value = newPwd;
@@ -257,27 +262,72 @@ onMounted(function(){
 
   /* ========== API Key 管理 ========== */
 
+  /* 本组件以前调了 esc() 却没定义也没 import，ReferenceError 被下面 renderApiKeys
+     所在的 .then 抓进 .catch，于是“接口 200 + 5 条数据”被渲染成“网络错误”。
+     跟其它视图保持同一个本地写法，不另外引入一套工具函数。 */
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
   function loadApiKeys(){
-    apiGet('/api/account/api-keys', { params: { uid: curUid } }).then(function(res){
+    apiGet('/api/account/api-keys').then(function(res){
+      if (res.code !== 200){
+        /* 不判 code 会把“接口报错”当成“空列表”，于是错误被渲染成“暂无 API Key” */
+        showApiKeysError(res.msg || '加载失败');
+        return;
+      }
       renderApiKeys(res.data);
-    }).catch(function(){
-      var list = document.getElementById('apikey-list');
-      if (list) list.innerHTML = '<div class="apikey-empty">网络错误</div>';
+    }).catch(function(err){
+      /* 把真实错误带出来：渲染报错与请求失败混在一起写“网络错误”，会让人去查后端 */
+      showApiKeysError(errText(err, '加载失败'));
     });
+  }
+
+  function showApiKeysError(msg){
+    var list = document.getElementById('apikey-list');
+    if (list) list.innerHTML = '<div class="apikey-empty">加载失败：' + esc(msg) + '</div>';
+  }
+
+  /* 后端按“HTTP 200 + body.code”表达业务错误，真实原因在 err.message 里；
+     只有确实是传输层失败才说“网络”——否则用户会去查网络/后端。 */
+  function errText(e, fallback){
+    var m = (e && (e.message || e)) || '';
+    m = String(m);
+    if (/Failed to fetch|NetworkError|Load failed|ERR_/i.test(m)) return '网络异常：' + m;
+    return m || fallback;
+  }
+
+  /* 可颁发 Key 的应用：取本人工作空间内的应用列表（与后端校验同一数据源） */
+  function loadApikeyApps(){
+    var sel = document.getElementById('apikey-app');
+    if (!sel) return;
+    apiGet('/api/workflows-app').then(function(res){
+      if (res.code !== 200){ toast(res.msg || '应用列表加载失败'); return; }
+      var items = res.data || [];
+      /* 应用可以重名（实测有三个“金融雷达”），只给名字会让人给错应用发 key；
+         只对重名的补一段 id 前缀做区分，不重名的保持干净 */
+      var nameCount = {};
+      items.forEach(function(a){ var n = a.name || '(未命名应用)'; nameCount[n] = (nameCount[n] || 0) + 1; });
+      sel.innerHTML = '<option value="">请选择应用</option>' +
+        items.map(function(a){
+          var n = a.name || '(未命名应用)';
+          var label = nameCount[n] > 1 ? n + ' · ' + String(a.id || '').slice(0, 6) : n;
+          return '<option value="' + esc(a.id) + '">' + esc(label) + '</option>';
+        }).join('');
+      if (!items.length) toast('你还没有可颁发 API Key 的应用，请先创建一个应用');
+    }).catch(function(e){ toast(errText(e, '应用列表加载失败')); });
   }
 
   function renderApiKeys(items){
     var list = document.getElementById('apikey-list');
     if (!list) return;
     if (!items || !items.length){
-      list.innerHTML = '<div class="apikey-empty">暂无 API Key，点击上方按钮创建</div>';
+      list.innerHTML = '<div class="apikey-empty">暂无 API Key，选择一个应用后点击上方按钮创建</div>';
       return;
     }
     list.innerHTML = items.map(function(item){
       return '<div class="apikey-item" data-id="' + item.id + '">' +
         '<div class="apikey-info">' +
           '<span class="apikey-token">' + esc(item.token || '') + '</span>' +
-          '<span class="apikey-meta">' + esc(item.type || 'app') + ' · ' + esc(item.created_at || '') + '</span>' +
+          '<span class="apikey-meta">' + esc(item.app_name || '未知应用') + ' · ' + esc(item.type || 'app') + ' · ' + esc(item.created_at || '') + '</span>' +
         '</div>' +
         '<button class="apikey-del" data-id="' + item.id + '" title="删除">✕</button>' +
       '</div>';
@@ -288,22 +338,31 @@ onMounted(function(){
       btn.addEventListener('click', function(){
         var id = this.getAttribute('data-id');
         if (!confirm('确定要删除此 API Key 吗？删除后无法恢复。')) return;
-        apiDelete('/api/account/api-keys/' + id, { params: { uid: curUid } })
+        apiDelete('/api/account/api-keys/' + id)
           .then(function(res){
+            /* 删不中（id 不存在/不是本工作空间）后端会回非 200，不能无条件报“已删除” */
+            if (res.code !== 200){ toast(res.msg || '删除失败'); return; }
             toast('已删除');
             loadApiKeys();
-          }).catch(function(){ toast('网络错误'); });
+          }).catch(function(e){ toast(errText(e, '删除失败')); });
       });
     });
   }
 
   function createApiKey(){
-    apiPost('/api/account/api-keys', { name: 'API Key', type: 'app' }, { params: { uid: curUid } }).then(function(res){
-      toast('API Key 创建成功');
-      // 显示完整 key（仅此一次）
-      alert('您的 API Key（仅显示一次，请妥善保存）:\n\n' + res.data.token);
+    var sel = document.getElementById('apikey-app');
+    var appId = sel ? sel.value : '';
+    if (!appId){ toast('请先选择要创建 API Key 的应用'); return; }
+    apiPost('/api/account/api-keys', { app_id: appId }).then(function(res){
+      if (res.code !== 200 || !res.data || !res.data.token){
+        toast(res.msg || '创建失败');
+        return;
+      }
+      toast('API Key 已就绪');
+      // 完整 key 只在这里给一次，列表里是脱敏的
+      alert('应用「' + (res.data.app_name || '') + '」的 API Key（请妥善保存，列表里只展示脱敏形式 app-xxxx...xxxx）:\n\n' + res.data.token);
       loadApiKeys();
-    }).catch(function(){ toast('网络错误'); });
+    }).catch(function(e){ toast(errText(e, '创建失败')); });
   }
 
   var btnCreateApikey = document.getElementById('btn-create-apikey');
@@ -312,6 +371,7 @@ onMounted(function(){
   }
 
   loadApiKeys();
+  loadApikeyApps();
 })
 </script>
 <style>

@@ -4,6 +4,8 @@ import json
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
+from utils.helpers import _safe_uid
+
 from config import get_db
 from utils.auth import login_required
 
@@ -300,7 +302,7 @@ def save_openapi_tool():
                            updated_at = VALUES(updated_at)''',
                         (
                             provider_id,
-                            request.user_id or '',
+                            _safe_uid(None),
                             tool.get('name', ''),
                             json.dumps(tool, ensure_ascii=False),
                             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),

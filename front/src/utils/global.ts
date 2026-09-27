@@ -47,6 +47,67 @@ export const NAV: NavGroup[] = [
   ]}
 ]
 
+/* 站点标题与标签页标题推导 */
+export const SITE_TITLE = '熵舟·智能体工作台'
+
+/* 子页→父级映射：这些路径名字接不到 NAV 的 href（如 /workflow-studio 的父页
+   其实是 /workflow-app），靠字符串削后缀推不出来，所以显式登记“子路径 -> 父页 href”。
+   只存已有的 NAV href 与已有的“详情/编辑/工作室”后缀词，不引入新页面名。 */
+const SUBPAGE_PARENT: Record<string, string> = {
+  '/workflow-studio': '/workflow-app',
+  '/template-studio': '/app-templates',
+  '/skill-detail': '/skills',
+}
+
+/** 按路径取导航项显示名（面包屑、权限提示等复用，避免再维护一份页面名表） */
+export function navLabelByPath(path: string): string {
+  for (const group of NAV) {
+    for (const item of group.items) {
+      if (item.href === path) return item.label
+    }
+  }
+  return ''
+}
+
+/**
+ * 由导航配置推导标签页标题，供 router.afterEach 使用。
+ *
+ * 只复用已有文案（NAV 的 label，以及 -edit/-detail/-studio 子页的父级名 + 后缀），
+ * 不再另外维护一份页面名表：那会和侧边栏/面包屑各说各话、迟早腐烂。
+ * 命中不了的页面退回站点名 —— 本次要修的是“离开详情页后标签页还挂着
+ * 上一个资源的标题”（keep-alive 下页面不会重新挂载，也没人负责复位标题）；
+ * 具体页面名可以后续按产品文案逐条补到路由 meta.title 上，这里已预留。
+ */
+export function resolvePageTitle(path: string, metaTitle?: string): string {
+  const navLabel = navLabelByPath(path)
+  if (navLabel) return `${navLabel} - ${SITE_TITLE}`
+
+  const base = path.replace(/(-edit|-detail|-studio).*/, '')
+  if (base !== path) {
+    const suffix = path.includes('-edit') ? '编辑' : path.includes('-detail') ? '详情' : '工作室'
+    for (const group of NAV) {
+      for (const item of group.items) {
+        if (item.href === base) return `${item.label} ${suffix} - ${SITE_TITLE}`
+      }
+    }
+  }
+
+  // 名字接不到父页的子页：用登记的父页 + 同一个后缀词
+  const parentId = SUBPAGE_PARENT[path]
+  if (parentId) {
+    for (const group of NAV) {
+      for (const item of group.items) {
+        if (item.href === parentId) {
+          const suffix = path.endsWith('-detail') ? '详情' : path.endsWith('-studio') ? '工作室' : '详情'
+          return `${item.label} ${suffix} - ${SITE_TITLE}`
+        }
+      }
+    }
+  }
+
+  return metaTitle ? `${metaTitle} - ${SITE_TITLE}` : SITE_TITLE
+}
+
 export const ICONS: Record<string, string> = {
   workbench: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>',
   robot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="8" width="14" height="10" rx="2"/><circle cx="9.5" cy="13" r="1" fill="currentColor"/><circle cx="14.5" cy="13" r="1" fill="currentColor"/><path d="M12 8V4M9 4h6"/></svg>',

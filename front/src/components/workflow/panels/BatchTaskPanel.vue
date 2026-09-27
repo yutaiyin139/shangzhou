@@ -21,9 +21,7 @@
         <div class="pp-model-row">
           <select v-model="modelKey" @change="commitModel" class="pp-model-select">
             <option value="">请选择模型</option>
-            <option v-for="m in models" :key="modelOptionKey(m)" :value="modelOptionKey(m)">
-              {{ m.credential_name || m.provider }} / {{ m.model_name }}
-            </option>
+            <option v-for="o in modelChoices" :key="o.key" :value="o.key">{{ o.label }}</option>
           </select>
           <button class="mp-btn mp-btn-outline mp-btn-sm" @click="showModelModal = true" title="配置模型供应商">
             ⚙️ 配置
@@ -142,8 +140,8 @@ const props = defineProps({ node: { type: Object, default: null } })
 const emit = defineEmits(['update'])
 
 const {
-  local, commit, models, modelKey, temperature,
-  commitModel, modelOptionKey, loadAllOptions: refreshModels,
+  local, commit, models, modelKey, modelChoices, temperature,
+  commitModel, loadAllOptions: refreshModels,
 } = usePanelState(props, emit)
 
 const showModelModal = ref(false)

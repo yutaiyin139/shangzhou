@@ -6,12 +6,19 @@ import urllib.error
 import urllib.parse
 import time
 
+# 后端已启用全局鉴权闸门（REQUIRE_LOGIN_FOR_API=strict），走 live HTTP 的脚本也必须带 token
+import e2e_auth_helper
+
+AUTH = e2e_auth_helper.get_auth_header()
+
 BASE = 'http://localhost:5000'
 AID = 15  # 现有 agent
 
 
 def call(method, path, body=None):
     req = urllib.request.Request(BASE + path, method=method)
+    for _k, _v in AUTH.items():
+        req.add_header(_k, _v)
     data = None
     if body is not None:
         data = json.dumps(body).encode()

@@ -26,7 +26,7 @@ from models.tables import (
     DIFY_TENANT_ACCOUNT_JOINS_TABLE_SQL,
     INSTALLED_APPS_TABLE_SQL,
 )
-from utils.helpers import now
+from utils.helpers import now, _safe_uid
 
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'templates')
@@ -311,87 +311,39 @@ def _update_template_dsl(marketplace_id, dsl_yaml):
         db.close()
 
 
-def _get_dify_account_by_email(email):
-    """根据邮箱在 MySQL 中查找账户及默认租户"""
-    if not email:
+def _resolve_dify_owner(uid):
+    """按账号 id 解析创建者（account_id + 默认租户）；解不出来就返回 None。
+
+    三条已经去掉的“兼容”路径，都是 users 表时代的包袱：
+    1) 先拿 uid 去 dify_accounts 查 email、再用 email 反查账户：uid 本身就是
+       dify_accounts.id，中转多余且危险（按 email + LIMIT 1 无 ORDER BY，一旦多个
+       账号邮箱相近/错位（库里真有过），命中哪个账号完全不确定）。
+    2) 解不出时回退“第一个 owner 账号”：那等于把新建的应用送进别人的工作区，
+       而且调用方看不出任何异常。宁可由调用方回 401，也不能默默归错人。
+    3) 采信客户端传来的 uid：现在调用方传的只能是登录 token 里的 user_id
+       （utils/helpers._safe_uid），这一层只负责把账号 id 换成人家的工作区。
+    多工作区时用 current DESC + tenant_id 把选择固定下来。
+    """
+    uid = str(uid or '').strip()
+    if not uid:
         return None
     db = get_db()
     try:
         cur = db.cursor()
         cur.execute(r'''
-            SELECT a.id AS account_id, t.id AS tenant_id
-            FROM dify_accounts a
-            JOIN dify_tenant_account_joins taj ON taj.account_id = a.id
-            JOIN dify_tenants t ON t.id = taj.tenant_id
-            WHERE LOWER(a.email) = LOWER(%s) AND taj.current = true
+            SELECT taj.account_id, taj.tenant_id
+            FROM dify_tenant_account_joins taj
+            JOIN dify_accounts a ON a.id = taj.account_id
+            WHERE taj.account_id = %s AND a.status = 'active'
+            ORDER BY taj.current DESC, taj.tenant_id
             LIMIT 1
-        ''', (email,))
+        ''', (uid,))
         row = cur.fetchone()
     finally:
         db.close()
     if row:
         return {'account_id': str(row['account_id']), 'tenant_id': str(row['tenant_id'])}
     return None
-
-
-def _get_default_dify_owner():
-    """获取 MySQL 中第一个 owner 账号作为默认创建者"""
-    db = get_db()
-    try:
-        cur = db.cursor()
-        cur.execute(r'''
-            SELECT a.id AS account_id, taj.tenant_id
-            FROM dify_accounts a
-            JOIN dify_tenant_account_joins taj ON taj.account_id = a.id
-            WHERE taj.role = 'owner'
-            ORDER BY a.created_at ASC
-            LIMIT 1
-        ''')
-        row = cur.fetchone()
-    finally:
-        db.close()
-    if row:
-        return {'account_id': str(row['account_id']), 'tenant_id': str(row['tenant_id'])}
-    return None
-
-
-def _is_uuid(value):
-    return bool(re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', value or ''))
-
-
-def _resolve_dify_owner(uid):
-    """根据本地用户 ID 或 Dify account_id 解析创建者；解析失败时使用默认 owner"""
-    owner = None
-    uid = (uid or '').strip()
-    if uid:
-        if _is_uuid(uid):
-            # 若 uid 是 Dify UUID，直接按 account_id 查找对应 email
-            db = get_db()
-            try:
-                cur = db.cursor()
-                cur.execute(r'''
-                    SELECT id, email FROM dify_accounts WHERE id = %s AND status = 'active' LIMIT 1
-                ''', (uid,))
-                row = cur.fetchone()
-            finally:
-                db.close()
-            if row:
-                owner = _get_dify_account_by_email(row['email'])
-        if not owner:
-            # 否则当成本地 dify_accounts.id，反查 email
-            db = get_db()
-            try:
-                cur = db.cursor()
-                # 使用 dify_accounts 表（users 表已合并）
-                cur.execute(r'SELECT email FROM dify_accounts WHERE id = %s', (str(uid),))
-                row = cur.fetchone()
-                if row and row['email']:
-                    owner = _get_dify_account_by_email(row['email'])
-            finally:
-                db.close()
-    if not owner:
-        owner = _get_default_dify_owner()
-    return owner
 
 
 def _sanitize_graph_for_import(graph):
@@ -774,10 +726,10 @@ def register_app_template_routes(app):
         body = request.json or {}
         name = (body.get('name') or r['name'] or '未命名应用').strip()
         description = (body.get('description') or r['description'] or '').strip()
-        uid = str(request.args.get('uid') or body.get('uid') or '').strip()
+        uid = _safe_uid(None)
         owner = _resolve_dify_owner(uid)
         if not owner:
-            return jsonify(code=500, msg='无法解析创建者，请确认数据库可访问')
+            return jsonify(code=401, msg='未登录或账号尚未加入任何工作区，无法从模板创建应用')
         try:
             app = _create_app_from_dsl(dsl_yaml, name, description, owner)
         except Exception as e:

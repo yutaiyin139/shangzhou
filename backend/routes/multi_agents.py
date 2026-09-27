@@ -180,10 +180,10 @@ def register_multi_agent_routes(app):
 
     @app.route('/api/multi-agents', methods=['GET'])
     def get_multi_agents():
-        """多智能体应用列表"""
+        """多智能体应用列表（只看本人创建的）"""
         from routes.agents import _ensure_agents_table
         _ensure_agents_table()
-        uid = _safe_uid(request.args.get('uid'))
+        uid = _safe_uid(None)
         db = get_db()
         try:
             cur = db.cursor()
@@ -228,7 +228,9 @@ def register_multi_agent_routes(app):
         name = d.get('name', '').strip()
         if not name:
             return jsonify(code=400, msg='请输入应用名称')
-        uid = _safe_uid(d.get('uid'))
+        uid = _safe_uid(None)
+        if not uid:
+            return jsonify(code=401, msg='请先登录再创建智能体')
         db = get_db()
         try:
             cur = db.cursor()

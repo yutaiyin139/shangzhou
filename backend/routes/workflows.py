@@ -11,6 +11,7 @@ from flask import jsonify, request, Response
 import yaml
 
 from config import get_db
+from utils.helpers import _safe_uid
 from models.tables import (
     WORKFLOW_VERSIONS_TABLE_SQL,
     WORKFLOW_TEST_RUNS_TABLE_SQL,
@@ -494,14 +495,14 @@ def register_workflow_routes(app):
         description = (body.get('description') or '').strip()
         mode = (body.get('mode') or 'workflow').strip().lower()
         model = body.get('model') or None
-        uid = str(request.args.get('uid') or body.get('uid') or '').strip()
+        uid = _safe_uid(None)
         if not name:
             return jsonify(code=400, msg='应用名称不能为空')
         if mode not in ('workflow', 'chatflow', 'advanced-chat', 'chat', 'agent-chat'):
             return jsonify(code=400, msg='不支持的应用模式')
         owner = _get_owner(uid)
         if not owner:
-            return jsonify(code=500, msg='无法解析创建者，请确认数据库可访问')
+            return jsonify(code=401, msg='未登录或账号尚未加入任何工作区，无法创建应用')
         try:
             app = _create_blank_dify_app(name, description, mode, owner, model)
         except Exception as e:
@@ -520,7 +521,7 @@ def register_workflow_routes(app):
         features = body.get('features')
         env_vars = body.get('environment_variables')
         conv_vars = body.get('conversation_variables')
-        uid = str(request.args.get('uid') or body.get('uid') or '').strip()
+        uid = _safe_uid(None)
         owner = _get_owner(uid)
         account_id = owner['account_id'] if owner else None
         ts = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -642,7 +643,7 @@ def register_workflow_routes(app):
         body = request.json or {}
         name = (body.get('name') or 'v%s' % (wf['version_number'] + 1)).strip()
         comment = (body.get('comment') or '').strip()
-        uid = str(request.args.get('uid') or body.get('uid') or '').strip()
+        uid = _safe_uid(None)
         # 在 MySQL 中发布：分配版本号并新增一条 published 工作流
         try:
             next_ver = _publish_dify_workflow(app_id, wf)
@@ -1007,7 +1008,7 @@ def register_workflow_routes(app):
             return jsonify(code=500, msg='应用缺少租户信息')
         body = request.json or {}
         inputs = body.get('inputs') or {}
-        user = str(body.get('user') or request.args.get('uid') or 'szagent-user')
+        user = str(body.get('user') or _safe_uid(None) or 'szagent-user')
         # 支持前端传入图数据，优先使用（解决未保存就运行的问题）
         graph = body.get('graph')
         mode = body.get('mode')
@@ -1065,7 +1066,7 @@ def register_workflow_routes(app):
             return jsonify(code=404, msg='应用不存在')
         body = request.json or {}
         inputs = body.get('inputs') or {}
-        user = str(body.get('user') or request.args.get('uid') or 'szagent-user')
+        user = str(body.get('user') or _safe_uid(None) or 'szagent-user')
         # 支持前端传入图数据，优先使用（解决未保存就运行的问题）
         graph = body.get('graph')
         mode = body.get('mode')
@@ -1104,8 +1105,10 @@ def register_workflow_routes(app):
         """
         if not _is_uuid(run_id):
             return jsonify(code=400, msg='非法的运行 ID')
-        from engine.workflow_runner import _cancel_workflow_task
-        success = _cancel_workflow_task(run_id)
+        # 以前导的是 `_cancel_workflow_task`，仓库里根本没这个名字（拆分遗留），
+        # 于一调用就是 ImportError，被全局错误处理器转成 500，停止按钮从来没生效过
+        from engine.workflow_utils import cancel_workflow_task
+        success = cancel_workflow_task(run_id)
         if success:
             return jsonify(code=200, msg='已停止工作流运行')
         return jsonify(code=404, msg='任务不存在或已结束')
@@ -1173,7 +1176,7 @@ def register_workflow_routes(app):
         result = body.get('result') or {}
         if not isinstance(result, dict):
             return jsonify(code=400, msg='result 格式错误')
-        uid = str(request.args.get('uid') or body.get('uid') or '').strip()
+        uid = _safe_uid(None)
         if not run_name:
             run_name = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         db = get_db()
@@ -1481,7 +1484,7 @@ def register_workflow_routes(app):
 
         body = request.json or {}
         inputs = body.get('inputs') or {}
-        user = str(body.get('user') or request.args.get('uid') or 'szagent-user')
+        user = str(body.get('user') or _safe_uid(None) or 'szagent-user')
         stream = bool(body.get('stream', False))
 
         try:

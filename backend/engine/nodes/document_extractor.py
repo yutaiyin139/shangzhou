@@ -4,7 +4,7 @@
 
 负责从上传的文档中提取文本内容，支持：
 - 纯文本文件（txt, md, csv, json, xml, html, htm）
-- PDF 文件（需要 PyPDF2 库）
+- PDF 文件（需要 pypdf 库）
 - Word 文档（docx，需要 python-docx 库）
 - 文件数组批量提取
 """
@@ -103,17 +103,21 @@ def _extract_text_from_file(file_info):
 
 
 def _extract_pdf_text(file_path):
-    """从 PDF 提取文本"""
+    """从 PDF 提取文本
+
+    用 pypdf 而不是 PyPDF2：后者是同一批作者已弃用的前身，且本仓 requirements 里
+    两个都声明、实际只装了 pypdf，导致这个节点长期返 “需要 PyPDF2 库”。
+    """
     try:
-        import PyPDF2
+        from pypdf import PdfReader
         text = ''
         with open(file_path, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = PdfReader(f)
             for page in reader.pages:
                 text += page.extract_text() + '\n'
         return text
     except ImportError:
-        return '[PDF 提取需要 PyPDF2 库]'
+        return '[PDF 提取需要 pypdf 库]'
     except Exception as e:
         return f'[PDF 提取错误: {str(e)}]'
 

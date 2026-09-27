@@ -31,6 +31,11 @@ MCP_URL = f'{BASE_URL}/mcp/v1'
 PASS = 0
 FAIL = 0
 
+# /mcp/v1/* 不在鉴权闸门职责内（不以 /api/ 开头），但 /api/mcp-server/* 需要带 token
+import e2e_auth_helper
+
+AUTH = e2e_auth_helper.get_auth_header()
+
 
 def test(name, condition, detail=''):
     global PASS, FAIL
@@ -235,7 +240,12 @@ test('无效工具返回错误', result.get('isError') == True)
 # 测试 3: REST 工具列表端点
 print('\n[3. REST 工具列表]')
 try:
-    with urllib.request.urlopen(f'{BASE_URL}/api/mcp-server/tools', timeout=5) as resp:
+    req = urllib.request.Request(
+        f'{BASE_URL}/api/mcp-server/tools',
+        headers=dict(AUTH),
+        method='GET',
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode('utf-8'))
         test('REST 工具列表', data.get('code') == 200)
         if data.get('code') == 200:

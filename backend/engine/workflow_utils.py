@@ -129,6 +129,15 @@ _active_workflow_tasks = {}
 _workflow_lock = threading.Lock()
 
 
+# 跨进程取消标记：key 前缀与存活时间（运行超过 1 小时后标记自动回收）
+_CANCEL_KEY_PREFIX = 'workflow:cancel:'
+_CANCEL_TTL = 3600
+
+
+def _cancel_key(run_id):
+    return _CANCEL_KEY_PREFIX + str(run_id)
+
+
 def register_workflow_task(run_id, thread_id=None):
     """注册一个工作流任务"""
     if thread_id is None:
@@ -139,22 +148,52 @@ def register_workflow_task(run_id, thread_id=None):
             'thread_id': thread_id,
             'started_at': time.time()
         }
+    # 开跑前清掉可能残留的跨进程取消标记，否则本次运行一开头就被当成已取消
+    try:
+        from utils.redis_cache import cache_delete
+        cache_delete(_cancel_key(run_id))
+    except Exception:
+        pass
 
 
 def cancel_workflow_task(run_id):
-    """取消一个工作流任务（返回是否成功）"""
+    """取消一个工作流任务（返回是否成功）
+
+    除了本进程的登记表，还把标记写一份到 Redis：登记表是内存结构，Web 进
+    程里只能看到自己起的那份，派给 Celery worker 的运行根取消不到（表现就
+    是“点了停止没反应”）。
+    """
+    found = False
     with _workflow_lock:
         if run_id in _active_workflow_tasks:
             _active_workflow_tasks[run_id]['cancelled'] = True
-            return True
-    return False
+            found = True
+    try:
+        from utils.redis_cache import cache_set
+        cache_set(_cancel_key(run_id), 1, ttl=_CANCEL_TTL)
+        # 不能拿 cache_set 的返回值当成功依据（实测写入成功它也返回 None），
+        # 只要没抛异常就说明取消标记已经发布出去。
+        found = True
+    except Exception as e:
+        print('[workflow_utils] 写入取消标记失败 run_id=%s: %s' % (run_id, str(e)[:120]))
+    return found
 
 
 def is_workflow_task_cancelled(run_id):
-    """检查工作流任务是否已被取消"""
+    """检查是否已取消：先看本进程登记表，再看 Redis 里的跨进程标记"""
     with _workflow_lock:
         task = _active_workflow_tasks.get(run_id)
-        return task['cancelled'] if task else False
+        if task and task['cancelled']:
+            return True
+    try:
+        from utils.redis_cache import cache_get
+        if cache_get(_cancel_key(run_id)):
+            if task is not None:
+                task['cancelled'] = True
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def unregister_workflow_task(run_id):

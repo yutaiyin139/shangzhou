@@ -47,7 +47,9 @@
         </nav>
 
         <div class="kd-stats">
-          <div class="kd-stat"><div class="n">{{ dataset.docCount || 0 }}</div><div class="l">文档</div></div>
+          <!-- 后端给的是下划线名 doc_count；以前读 dataset.docCount（驼峰）永远是 undefined，
+               导致列表有文档而顶部计数恒显示 0。拿不到字段时退回表格里实际列出的条数。 -->
+          <div class="kd-stat"><div class="n">{{ documents.length || dataset.doc_count || 0 }}</div><div class="l">文档</div></div>
           <div class="kd-stat"><div class="n">{{ totalSegments }}</div><div class="l">分段</div></div>
         </div>
       </aside>

@@ -26,12 +26,27 @@ echo.
 REM Config
 set "BACKUP_DIR=%~dp0backups"
 set "MYSQL_PATH="
-set "MYSQL_USER=root"
-set "MYSQL_PASS=%DB_PASSWORD%"
+REM DB config comes from project-root .env (dev DB is remote now; do not hardcode localhost/root)
+REM WARNING: `for /f ... in (file)` silently DROPS a KEY=VALUE line that follows a UTF-8 Chinese
+REM comment line (cmd's codepage-936 reader pairs the trailing byte with the newline). That would
+REM leave MYSQL_HOST=localhost / MYSQL_USER=root and back up the wrong server. findstr splits
+REM lines byte-wise and is immune, so the file is always pre-filtered through findstr.
 set "MYSQL_HOST=localhost"
 set "MYSQL_PORT=3306"
+set "MYSQL_USER=root"
+set "MYSQL_PASS="
 set "DB_NAME=szagent"
 set "MODE=single"
+
+if exist "%~dp0.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (`findstr /b /r "DB_HOST= DB_PORT= DB_USER= DB_PASSWORD= DB_NAME=" "%~dp0.env"`) do (
+    if /i "%%~A"=="DB_HOST"     set "MYSQL_HOST=%%~B"
+    if /i "%%~A"=="DB_PORT"     set "MYSQL_PORT=%%~B"
+    if /i "%%~A"=="DB_USER"     set "MYSQL_USER=%%~B"
+    if /i "%%~A"=="DB_PASSWORD" set "MYSQL_PASS=%%~B"
+    if /i "%%~A"=="DB_NAME"     set "DB_NAME=%%~B"
+  )
+)
 
 REM Parse arguments
 :parse_args

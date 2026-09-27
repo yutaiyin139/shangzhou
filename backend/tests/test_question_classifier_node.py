@@ -8,7 +8,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from unittest.mock import patch, MagicMock
-from engine.workflow_runner import _node_question_classifier
+# 实现已拆到 engine/nodes/question_classifier.py
+from engine.nodes.question_classifier import _node_question_classifier
 
 
 def _make_model_cfg():
@@ -102,8 +103,8 @@ def test_classifier_with_mocked_llm():
         'content': '类别ID: 1\n类别名称: 技术支持'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -137,8 +138,8 @@ def test_classifier_sales_category():
         'content': '类别ID: 2\n类别名称: 销售咨询'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -172,8 +173,8 @@ def test_classifier_complaint_category():
         'content': '类别ID: 3\n类别名称: 投诉建议'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -207,8 +208,8 @@ def test_classifier_fallback_matching():
         'content': '这个问题属于销售咨询类别'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -241,8 +242,8 @@ def test_classifier_custom_output_var():
         'content': '类别ID: 1\n类别名称: 技术支持'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -275,8 +276,8 @@ def test_classifier_raw_response_included():
         'content': '类别ID: 1\n类别名称: 技术支持\n这是原始响应内容'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -311,8 +312,8 @@ def test_classifier_two_classes():
         'content': '类别ID: yes\n类别名称: 是'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',
@@ -345,8 +346,8 @@ def test_classifier_class_name_in_output():
         'content': '类别ID: 2\n类别名称: 销售咨询'
     }
 
-    with patch('engine.workflow_runner._call_llm', return_value=mock_response):
-        with patch('engine.workflow_runner.get_db') as mock_db:
+    with patch('engine.nodes.question_classifier._call_llm', return_value=mock_response):
+        with patch('engine.nodes.question_classifier.get_db') as mock_db:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = {
                 'api_key': 'test-key',

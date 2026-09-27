@@ -49,7 +49,7 @@
     <div class="layout-body">
       <aside class="sidebar" :class="{ open: mobileMenuOpen }">
         <div class="nav-scroll">
-          <div v-for="g in NAV" :key="g.group" class="nav-group">
+          <div v-for="g in visibleNav" :key="g.group" class="nav-group">
             <div class="nav-group-title">{{ t(g.i18k) || g.group }}</div>
             <router-link
               v-for="it in g.items"
@@ -94,6 +94,7 @@
 import { ref, computed, onActivated, onDeactivated, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAV, ICONS, toast } from '../utils/global'
+import { getAuthRole } from '../api/client'
 import { t } from '../locales'
 import { useUserStore } from '../stores/user'
 import { useAppStore } from '../stores/app'
@@ -113,6 +114,25 @@ const appStore = useAppStore()
 const menuOpen = ref(false)
 const mobileMenuOpen = ref(false)
 const ddRef = ref(null)
+
+/* 当前权限级别：取服务端签发的 token 载荷，不依赖 sessionStorage.loginUser */
+const myRole = ref(getAuthRole())
+
+function navAllowed(href) {
+  // 判据直接取路由表里的 meta.roles —— 与守卫同一份来源，不会出现“看得见但进不去”。
+  const roles = router.resolve(href).meta && router.resolve(href).meta.roles
+  if (!roles || roles.length === 0) return true
+  const me = (myRole.value || '').toLowerCase()
+  return roles.some(r => String(r).toLowerCase() === me)
+}
+
+/* 非管理员看不到“平台管理”整组：以前 4 项无条件渲染，点一下被静默弹回工作台，
+   用户只会觉得“菜单坏了”；现在要么能进才显示，要么不显示。 */
+const visibleNav = computed(() => {
+  return NAV
+    .map(g => ({ ...g, items: g.items.filter(it => navAllowed(it.href)) }))
+    .filter(g => g.items.length > 0)
+})
 
 // 面包屑计算
 const breadcrumbs = computed(() => {
@@ -223,6 +243,8 @@ onActivated(() => {
   document.addEventListener('keydown', onKeyDown)
   // 恢复用户状态
   userStore.restoreFromSession()
+  // 刷新权限级别（令牌刷新后角色可能变）
+  myRole.value = getAuthRole()
   // 启动通知轮询（每 30s 拉取一次后端通知）
   appStore.startNotificationPolling()
 })

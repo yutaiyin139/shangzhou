@@ -11,7 +11,8 @@ import uuid
 from datetime import datetime
 from flask import jsonify, request
 from config import get_db
-from utils.helpers import now, _generate_password, _compare_password, _valid_password, _needs_rehash
+from utils.helpers import (now, _generate_password, _compare_password, _valid_password,
+                           _needs_rehash, _check_account_identity)
 from utils.auth import (
     generate_token_pair,
     refresh_access_token,
@@ -20,6 +21,8 @@ from utils.auth import (
     login_required,
     role_required,
     revoke_token,
+    get_account_role,
+    platform_admin_required,
 )
 from utils.login_lockout import (
     record_login_failure,
@@ -243,15 +246,14 @@ def register_auth_routes(app):
             if supplied_invite != invite_code_required:
                 return jsonify(code=400, msg='邀请码缺失或错误')
 
-        # 检查用户名/邮箱唯一性
+        # 账号名/邮箱唯一性（含“你的账号名是别人的邮箱”这种跨列撞车）
         db = get_db()
         try:
-            cur = db.cursor()
-            cur.execute(r'SELECT id FROM dify_accounts WHERE email = %s OR name = %s', (email, username))
-            if cur.fetchone():
-                return jsonify(code=400, msg='邮箱或用户名已存在')
+            err = _check_account_identity(db.cursor(), username, email)
         finally:
             db.close()
+        if err:
+            return jsonify(code=400, msg=err)
 
         # 创建账号
         salt_b64, pwd_b64 = _generate_password(password)
@@ -572,7 +574,12 @@ def register_auth_routes(app):
     #  USERS（dify_accounts 为唯一用户表）
     # ═══════════════════════════════════════════
 
+    # 用户与角色是平台管理面：只能登录 + 只能管理员。以前这组接口只被集中闸门
+    # 挡了一道（= 任何登录用户可用），等于人人都能拉到全体账号的邮箱/手机号，
+    # 还能 POST /api/users 建个 role=admin 的号、PUT /api/users/<id> 改任何人密码、
+    # PUT /api/roles/<id>/permissions 给自己加权 —— 账号接管与提权一条路走完。
     @app.route('/api/users', methods=['GET'])
+    @platform_admin_required
     def get_users():
         """用户列表：直接从 dify_accounts 查询，角色通过 user_roles 关联"""
         _ensure_auth_tables()
@@ -619,6 +626,7 @@ def register_auth_routes(app):
             db.close()
 
     @app.route('/api/users', methods=['POST'])
+    @platform_admin_required
     def create_user():
         """创建用户"""
         _ensure_auth_tables()
@@ -637,15 +645,14 @@ def register_auth_routes(app):
         if not _valid_password(password):
             return jsonify(code=400, msg='密码至少 8 位且需同时包含字母和数字')
 
-        # 检查是否已存在
+        # 检查是否已存在（账号名/邮箱交叉唯一，见 utils.helpers._check_account_identity）
         db = get_db()
         try:
-            cur = db.cursor()
-            cur.execute(r'SELECT id FROM dify_accounts WHERE email = %s OR name = %s', (email, username))
-            if cur.fetchone():
-                return jsonify(code=400, msg='邮箱或用户名已存在，请更换')
+            err = _check_account_identity(db.cursor(), username, email)
         finally:
             db.close()
+        if err:
+            return jsonify(code=400, msg=err + '，请更换')
 
         salt_b64, pwd_b64 = _generate_password(password)
         account_uuid = str(uuid.uuid4())
@@ -684,6 +691,7 @@ def register_auth_routes(app):
         return jsonify(code=200, msg='创建成功', data={'id': account_uuid})
 
     @app.route('/api/users/<uid>', methods=['PUT'])
+    @platform_admin_required
     def update_user(uid):
         """更新用户"""
         _ensure_auth_tables()
@@ -692,7 +700,7 @@ def register_auth_routes(app):
         if not acct:
             return jsonify(code=404, msg='账号不存在')
         email = (d.get('email') or acct['email'] or '').strip().lower()
-        username = d.get('username') or acct['name']
+        username = (d.get('username') or acct['name'] or '').strip()
         nickname = d.get('nickname', acct['nickname'] or '')
         phone = d.get('phone', acct['phone'] or '')
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -700,6 +708,11 @@ def register_auth_routes(app):
         db = get_db()
         try:
             cur = db.cursor()
+            # 改名/改邮箱也要守全局唯一（排除自己），否则管理员可以把别人的账号名
+            # 改成某个已存在的邮箱，把登录匹配（name OR email）弄成歧义
+            err = _check_account_identity(cur, username, email, exclude_id=uid)
+            if err:
+                return jsonify(code=400, msg=err)
             # 更新 dify_accounts
             cur.execute(r'''UPDATE dify_accounts SET name = %s, nickname = %s, email = %s, phone = %s, updated_at = %s WHERE id = %s''',
                         (username, nickname, email, phone, ts, uid))
@@ -723,6 +736,7 @@ def register_auth_routes(app):
         return jsonify(code=200, msg='更新成功')
 
     @app.route('/api/users/<uid>', methods=['DELETE'])
+    @platform_admin_required
     def delete_user(uid):
         """删除用户"""
         _ensure_auth_tables()
@@ -748,6 +762,7 @@ def register_auth_routes(app):
             db.close()
 
     @app.route('/api/users/<uid>/roles', methods=['PUT'])
+    @platform_admin_required
     def set_user_role(uid):
         """设置用户角色"""
         _ensure_auth_tables()
@@ -807,6 +822,7 @@ def register_auth_routes(app):
             db.close()
 
     @app.route('/api/roles', methods=['POST'])
+    @platform_admin_required
     def create_role():
         d = request.get_json()
         name = d.get('name', '').strip()
@@ -830,6 +846,7 @@ def register_auth_routes(app):
             db.close()
 
     @app.route('/api/roles/<int:rid>', methods=['PUT'])
+    @platform_admin_required
     def update_role(rid):
         d = request.get_json()
         db = get_db()
@@ -850,6 +867,7 @@ def register_auth_routes(app):
             db.close()
 
     @app.route('/api/roles/<int:rid>', methods=['DELETE'])
+    @platform_admin_required
     def delete_role(rid):
         db = get_db()
         try:
@@ -904,6 +922,7 @@ def register_auth_routes(app):
             db.close()
 
     @app.route('/api/roles/<int:rid>/permissions', methods=['PUT'])
+    @platform_admin_required
     def save_role_permissions(rid):
         d = request.get_json()
         perm_ids = d.get('permission_ids', [])
@@ -1052,23 +1071,14 @@ def register_auth_routes(app):
                 except Exception:
                     pass  # 升级失败不影响登录
 
-            # 3. 查询角色信息
-            db = get_db()
-            try:
-                cur = db.cursor()
-                cur.execute(r'''
-                    SELECT COALESCE(GROUP_CONCAT(r.name SEPARATOR ', '), '') AS role_name
-                    FROM user_roles ur
-                    JOIN roles r ON r.id = ur.role_id
-                    WHERE ur.user_id = %s
-                ''', (acc['id'],))
-                role_row = cur.fetchone()
-                role_name = role_row['role_name'] if role_row else ''
-            finally:
-                db.close()
-
-            # 4. 根据角色推断权限级别
-            role_level = 'admin' if 'admin' in role_name.lower() or '管理员' in role_name else 'user'
+            # 3. 角色与权限级别：判定口径全后端只有一处（utils/auth.get_account_role）。
+            #    以前这里自己写了句 'admin' in role_name.lower() or '管理员' in role_name，
+            #    而 roles 表里同时有遗留的“运维管理员/业务管理员/普通用户”：按子串猜会把
+            #    “业务管理员”也提成 admin，而 token 里的 role=admin 是 api_guard/ownership
+            #    跳过归属校验、前端放行管理员菜单的凭据 —— 等于静默提权。
+            role_info = get_account_role(acc['id'])
+            role_name = role_info['role_name']
+            role_level = role_info['level']
 
             # 5. 生成 JWT Token 对
             tokens = generate_token_pair(

@@ -8,8 +8,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
+# 节点实现已拆到 engine/nodes/human_input.py；图执行入口仍在 workflow_runner
+from engine.nodes.human_input import _node_human_input
 from engine.workflow_runner import (
-    _node_human_input,
     _execute_workflow_graph,
     run_workflow,
 )
@@ -163,8 +164,12 @@ def test_workflow_pause_position():
     # 验证前面的节点已执行（code1 设置了 result = True）
     context = result.get('__context__', {})
     assert context.get('result') is True
-    # 验证当前节点索引（应该是 human 节点的索引 = 2）
-    assert result.get('__current_node_idx__', 0) == 2
+    # 验证当前暂停在 human 节点：恢复流程靠 node_id 与 executed 集合定位
+    # （workflow_runner._pause_payload 里的 __current_node_idx__ / __exec_order__ 全仓无消费方，
+    #   具体数值随调度器实现变化，不应再断言）
+    assert result.get('__human_input_node_id__') == 'human'
+    assert 'code1' in (result.get('__executed_nodes__') or [])
+    assert 'human' not in (result.get('__executed_nodes__') or [])
     print('[PASS] test_workflow_pause_position')
 
 

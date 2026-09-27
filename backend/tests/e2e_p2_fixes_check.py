@@ -27,27 +27,86 @@ class TestRegistration(unittest.TestCase):
         cls.app = flask_app_mod.app
         cls.app.config['TESTING'] = True
         cls.client = cls.app.test_client()
+        cls._created_emails = []
+
+    @classmethod
+    def tearDownClass(cls):
+        """用例自己建的账号自己收走。
+
+        注册会连带建租户与 join 记录，不清理就会像这次一样在库里堆出十几个 test_*
+        账号（它们全都能登录）。本次发布前已用
+        scripts/maintenance/cleanup_test_accounts.py 清过一轮，这里防它长回来。
+        """
+        emails = list(getattr(cls, '_created_emails', []))
+        if not emails:
+            return
+        try:
+            from config import get_db
+        except Exception:
+            return
+        db = get_db()
+        try:
+            cur = db.cursor()
+            for email in emails:
+                cur.execute('SELECT id FROM dify_accounts WHERE email = %s', (email,))
+                for row in cur.fetchall():
+                    aid = str(row['id'])
+                    cur.execute('SELECT tenant_id FROM dify_tenant_account_joins '
+                                'WHERE account_id = %s', (aid,))
+                    tids = [str(x['tenant_id']) for x in cur.fetchall()]
+                    cur.execute('DELETE FROM user_roles WHERE user_id = %s', (aid,))
+                    cur.execute('DELETE FROM dify_tenant_account_joins WHERE account_id = %s',
+                                (aid,))
+                    cur.execute('DELETE FROM dify_accounts WHERE id = %s', (aid,))
+                    # 只删跑完之后再也没成员的租户，不能隔空扫掉共用工作区
+                    for tid in tids:
+                        cur.execute('SELECT COUNT(1) AS n FROM dify_tenant_account_joins '
+                                    'WHERE tenant_id = %s', (tid,))
+                        if not int((cur.fetchone() or {}).get('n') or 0):
+                            cur.execute('DELETE FROM dify_tenants WHERE id = %s', (tid,))
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
 
     def test_01_register_success(self):
         """注册成功"""
         import uuid
         username = f'test_reg_{uuid.uuid4().hex[:8]}'
+        email = f'{username}@test.com'
         resp = self.client.post('/api/register', json={
             'username': username,
             'password': 'Test@1234',
-            'email': f'{username}@test.com'
+            'email': email
         })
         data = json.loads(resp.data)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(data['code'], 200)
         self.assertIn('id', data.get('data', {}))
+        TestRegistration._created_emails.append(email)
 
     def test_02_register_duplicate_email(self):
-        """重复邮箱注册失败"""
+        """重复邮箱注册失败
+
+        以前这里写的是开发者的真实邮箱（当作“肯定已存在的邮箱”），两个问题：
+        换一个环境就假失败，且仓库里永留个人邮箱。现在改成“自己先注一个再用同一个邮箱重试”，
+        用例自含、不依赖库里残留数据。
+        """
+        import uuid
+        username = f'test_dup_{uuid.uuid4().hex[:8]}'
+        email = f'{username}@test.com'
+        first = self.client.post('/api/register', json={
+            'username': username, 'password': 'Test@1234', 'email': email
+        })
+        # 首次注册可能因“未开放注册/需邀请码”被拦，那种情况下本用例无法验证重复分支
+        if json.loads(first.data).get('code') != 200:
+            self.skipTest('首次注册未成功（注册开关或邀请码限制），重复邮箱分支无法验证')
+        TestRegistration._created_emails.append(email)
         resp = self.client.post('/api/register', json={
-            'username': 'yuty',
+            'username': username + 'b',
             'password': 'Test@1234',
-            'email': 'yutaiyin@css.com.cn'
+            'email': email
         })
         data = json.loads(resp.data)
         self.assertEqual(data['code'], 400)
@@ -82,9 +141,13 @@ class TestPasswordReset(unittest.TestCase):
         cls.client = cls.app.test_client()
 
     def test_01_forgot_password_existing_email(self):
-        """已存在邮箱发送重置链接"""
+        """已存在邮箱发送重置链接
+
+        断言本身是“无论邮箱存在与否返回相同提示”，所以不需要拿真实存活的邮箱去试；
+        换成固定夹具邮箱，避免带真实个人的邮箱进入仓库，也避免 SMTP 配好时真的发信给对方。
+        """
         resp = self.client.post('/api/password/forgot', json={
-            'email': 'yutaiyin@css.com.cn'
+            'email': 'p2-fixture@example.com'
         })
         data = json.loads(resp.data)
         self.assertEqual(resp.status_code, 200)

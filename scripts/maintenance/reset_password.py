@@ -6,6 +6,9 @@
 用法：
     cd backend && python ../scripts/maintenance/reset_password.py <username> <new_password>
     或设置环境变量 RESET_USERNAME / RESET_PASSWORD 后直接运行。
+
+账号的唯一真相源是 dify_accounts（旧 users 表已废弃并删表，不要再往回同步）。
+新密码会打印到日志里吗？不会 —— 只回显账号名，口令不落到 stdout。
 """
 
 import os
@@ -14,7 +17,7 @@ import sys
 # 本脚本已归档至 scripts/maintenance/，config.py / utils/ 位于 backend/
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'backend'))
 
-from utils.helpers import _generate_password
+from utils.helpers import _generate_password, _valid_password
 from config import get_db
 
 # ============================================================
@@ -26,10 +29,10 @@ NEW_PASSWORD = sys.argv[2] if len(sys.argv) > 2 else os.getenv('RESET_PASSWORD',
 
 
 def reset_password(username, new_password):
-    """
-    重置指定用户的密码。
-    同时更新 dify_accounts 和 users 表。
-    """
+    """重置指定账号的密码（账号只存在于 dify_accounts，users 表已废弃删除）"""
+    if not _valid_password(new_password):
+        print('错误：新密码至少 8 位且需同时包含字母和数字（与 /api/register 同一口径）')
+        return False
     # 生成新的密码哈希
     salt_b64, pwd_b64 = _generate_password(new_password)
     print(f'生成密码哈希完成')
@@ -40,10 +43,13 @@ def reset_password(username, new_password):
     try:
         cur = db.cursor()
 
-        # 1. 查找 dify_accounts 中的用户
+        # 1. 查找 dify_accounts 中的用户：与 /api/login 同一条口径 ——
+        #    账号名精确匹配必须优先于邮箱匹配，否则“输入某人的账号名恰好
+        #    等于另一人的邮箱”时，无 ORDER BY 的 LIMIT 1 会改错人的密码
         cur.execute(
-            r"SELECT id, name, email FROM dify_accounts WHERE name = %s OR email = %s LIMIT 1",
-            (username, username)
+            r"SELECT id, name, email FROM dify_accounts WHERE name = %s OR email = %s "
+            r"ORDER BY (name = %s) DESC LIMIT 1",
+            (username, username, username)
         )
         acc = cur.fetchone()
         if not acc:
@@ -57,15 +63,9 @@ def reset_password(username, new_password):
             r'UPDATE dify_accounts SET password = %s, password_salt = %s WHERE id = %s',
             (pwd_b64, salt_b64, acc['id'])
         )
-        print(f'已更新 dify_accounts 密码')
-
-        # 3. users 表已合并到 dify_accounts，无需额外同步
-        print(f'users 表已合并到 dify_accounts，跳过同步')
-
         db.commit()
         print(f'\n密码重置成功！')
-        print(f'  用户名: {username}')
-        print(f'  新密码: {new_password}')
+        print(f'  用户名: {acc["name"]}')
         return True
 
     except Exception as e:
@@ -81,7 +81,7 @@ if __name__ == '__main__':
     print('密码重置工具')
     print('=' * 50)
     print(f'目标用户: {TARGET_USERNAME}')
-    print(f'新密码: {NEW_PASSWORD}')
+    print('新密码: ****（不回显，避免落进终端录屏/历史）')
     print('-' * 50)
 
     confirm = input('确认重置密码？(y/N): ').strip().lower()

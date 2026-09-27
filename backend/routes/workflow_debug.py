@@ -5,6 +5,8 @@ import uuid
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
+from utils.helpers import _safe_uid
+
 from models.tables import (
     WORKFLOW_DEBUG_SESSIONS_TABLE_SQL,
     WORKFLOW_BATCH_RUNS_TABLE_SQL,
@@ -88,7 +90,7 @@ def start_debug_session(app_id):
                         status, context_json, node_results_json, created_at, updated_at)
                        VALUES (%s, %s, %s, %s, %s, 'running', '{}', '{}', %s, %s)''',
                     (
-                        session_id, app_id, request.user_id or '',
+                        session_id, app_id, _safe_uid(None),
                         json.dumps(inputs, ensure_ascii=False),
                         json.dumps(breakpoints, ensure_ascii=False),
                         now, now,
@@ -198,8 +200,9 @@ def step_debug(session_id):
 
     # 执行节点
     try:
-        from engine.workflow_runner import _execute_single_node
-        result = _execute_single_node(node_type, node_data, context, {})
+        # 单步调试要的就是"只跑这一个节点"，入口是 _execute_node（旧的 _execute_single_node 并不存在）
+        from engine.workflow_runner import _execute_node
+        result = _execute_node(node_type, node_data, context, {})
         if isinstance(result, dict):
             context.update(result)
             node_results[next_node_id] = result
@@ -324,8 +327,8 @@ def continue_debug(session_id):
         node_type = node_data.get('type', '')
 
         try:
-            from engine.workflow_runner import _execute_single_node
-            result = _execute_single_node(node_type, node_data, context, {})
+            from engine.workflow_runner import _execute_node
+            result = _execute_node(node_type, node_data, context, {})
             if isinstance(result, dict):
                 context.update(result)
                 node_results[next_node_id] = result
@@ -445,7 +448,7 @@ def create_batch_run(app_id):
                         input_data_json, created_at, updated_at)
                        VALUES (%s, %s, %s, %s, 'pending', %s, %s, %s, %s)''',
                     (
-                        batch_id, app_id, request.user_id or '', name,
+                        batch_id, app_id, _safe_uid(None), name,
                         len(input_data),
                         json.dumps(input_data, ensure_ascii=False),
                         now, now,
@@ -493,8 +496,18 @@ def start_batch_run(app_id, batch_id):
     try:
         from tasks.workflow_tasks import execute_batch_run
         execute_batch_run.delay(batch_id)
-    except Exception:
-        pass
+    except Exception as e:
+        # 以前这里 except: pass —— 批次会被标成 running 但永无人执行，前端只看到"已启动"
+        err_msg = '无法排入后台队列: %s' % str(e)
+        db2 = get_db()
+        try:
+            cur2 = db2.cursor()
+            cur2.execute(r'UPDATE workflow_batch_runs SET status = "error", error_message = %s, updated_at = %s WHERE id = %s',
+                         (err_msg[:500], datetime.now().strftime('%Y-%m-%d %H:%M:%S'), batch_id))
+            db2.commit()
+        finally:
+            db2.close()
+        return jsonify(code=500, msg='批量任务启动失败: ' + str(e))
 
     return jsonify(code=200, msg='批量任务已启动')
 

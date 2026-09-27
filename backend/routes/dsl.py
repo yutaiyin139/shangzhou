@@ -115,8 +115,21 @@ def _export_agent_dsl(aid):
         db.close()
 
 
-def _import_agent_dsl(dsl_data, owner_id=1):
-    """从 YAML DSL 创建/更新单智能体"""
+def _import_agent_dsl(dsl_data, owner_id=None):
+    """从 YAML DSL 创建/更新单智能体。
+
+    owner_id 缺省不再用 1：那列已改成存 dify_accounts.id（UUID），
+    写进去一个 '1' 会让导入的智能体对任何登录账号都不可见（列表按 owner 过滤）。
+    没传时回退到当前登录身份，拿不到真实账号就拒绝导入，不造无主数据。
+    """
+    owner_id = str(owner_id or '').strip()
+    if not owner_id:
+        from utils.helpers import _safe_uid
+        owner_id = _safe_uid(None)
+    if not owner_id or owner_id.isdigit():
+        # 空串 = 无登录态（_safe_uid 现在不再伪造身份）；纯数字 = 已废弃的旧 users.id 残留。
+        # 这两种值写进 owner 只会造出对任何账号都不可见、又不报错的无主数据。
+        return None, '无法确定导入归属（缺少登录态），请在页面登录后重试'
     app_section = dsl_data.get('app', {})
     agent_section = dsl_data.get('agent', {})
     skills_section = dsl_data.get('skills', [])
@@ -326,7 +339,10 @@ def register_dsl_routes(app):
         _ensure_tables()
         body = request.get_json() or {}
         dsl_text = body.get('dsl', '')
-        owner_id = body.get('owner_id', 1)
+        # 归属由登录身份决定，不接受客户端传入：旧写法 body.get('owner_id', 1) 既能伪造
+        # 他人归属，也会在列改成 UUID 后把导入的智能体写成谁也看不见的 '1'
+        from utils.helpers import _safe_uid
+        owner_id = _safe_uid(None)
         overwrite = body.get('overwrite', False)
 
         if not dsl_text:

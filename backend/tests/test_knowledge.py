@@ -191,7 +191,7 @@ def test_calc_keyword_score_english():
 
 
 def test_rerank_fallback():
-    """测试 Rerank 无模型时回退到原始排序"""
+    """测试 Rerank 无模型时不吞分段（注意：不是“保持原序”）"""
     segments = [
         {'content': '结果A'},
         {'content': '结果B'},
@@ -199,8 +199,9 @@ def test_rerank_fallback():
     ]
     result = rerank_segments('查询', segments)
     assert len(result) == 3
-    # 无模型时应该保持原始顺序
-    assert result[0]['content'] == '结果A'
+    # utils/rerank.py 的实序是：本地打分 -> API -> embedding 相似度 -> 才回退原序，
+    # 所以“无 rerank 模型”并不等价于“顺序不变”；这里只钉住真正不变的契约：不丢分段。
+    assert sorted(s['content'] for s in result) == ['结果A', '结果B', '结果C']
     print('[PASS] test_rerank_fallback')
 
 

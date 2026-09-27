@@ -628,6 +628,16 @@ LOG_BACKUP_COUNT=10
 # Flask 配置
 FLASK_DEBUG=0
 SECRET_KEY=${FLASK_SECRET}
+APP_VERSION=1.0.0
+
+# 安全开关：缺省值本身就是隐患——REQUIRE_LOGIN_FOR_API 不设即为 off（全部 /api/* 免登录），
+# OWNERSHIP_CHECK_MODE 不设即为 warn（只记日志不拦截）。
+# 这三个键必须写在这里，不能只放在 .env.example 里：本脚本生成的 .env 会直接覆盖它。
+REQUIRE_LOGIN_FOR_API=strict
+OWNERSHIP_CHECK_MODE=strict
+LOGIN_LOCKOUT_ENABLED=true
+# 登录页图形验证码（前端构建时内联）；不设则 LoginView 默认 true，写出来以免歧义
+VITE_LOGIN_CAPTCHA=true
 
 # Celery 配置
 CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:6379/0
@@ -675,6 +685,13 @@ for _name in dir(T):
                 ok += 1
             except Exception as _e:
                 print('skip', _name, repr(_e))
+# 废表收尾：账号已合并进 dify_accounts，旧部署里可能还留着一张没人读的 users 空表；
+# models/tables.py 已不再定义它，这里把存量机器上的残留一并清掉。
+try:
+    cur.execute('DROP TABLE IF EXISTS users')
+    print('废弃的 users 表已清理（如存在）')
+except Exception as _e:
+    print('drop users skipped:', repr(_e))
 db.commit()
 db.close()
 print('数据库初始化完成: %d 张表已就绪' % ok)
@@ -1237,11 +1254,16 @@ print_summary() {
     echo -e "  定时备份: 每天凌晨 3:00 自动执行"
     echo ""
 
-    echo -e "${YELLOW}⚠ 重要提示:${NC}"
-    echo -e "  1. 请保存好数据库密码，丢失后无法恢复"
-    echo -e "  2. 建议配置域名和 SSL 证书"
-    echo -e "  3. 定期查看备份日志: ${LOG_DIR}/backup.log"
-    echo -e "  4. 生产环境请修改默认密码"
+    echo -e "${YELLOW}⚠ 部署后必须做的安全步骤:${NC}"
+    echo -e "  1. 系统里${BOLD}没有任何预置账号${NC}：请用上面的网站地址注册你自己的第一个账号，"
+    echo -e "     它会自动成为创建者；登录后再去做第 2 步"
+    echo -e "  2. ${BOLD}关闭开放注册${NC}（否则任何人都能自助注册进来）：登录后进「系统设置」，"
+    echo -e "     取消勾选“是否开放注册”；若要保留注册但只给受邀者用，"
+    echo -e "     就只填“注册邀请码”（后端 /api/register 会强制校验）"
+    echo -e "  3. 凭证文件 ${DEPLOY_DIR}/.credentials 权限已是 600，建议另存后删除"
+    echo -e "  4. 安全开关（REQUIRE_LOGIN_FOR_API / OWNERSHIP_CHECK_MODE）已写入"
+    echo -e "     ${DEPLOY_DIR}/.env，不要改回 off/warn；改了需重启 szagent-backend"
+    echo -e "  5. 定期查看备份日志: ${LOG_DIR}/backup.log"
     echo ""
 
     # 保存密码到文件

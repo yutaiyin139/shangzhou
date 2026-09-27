@@ -174,10 +174,15 @@
   </AppShell>
 </template>
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, onActivated } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { toast, openModal, closeModal, getLoginUser } from '../utils/global'
+import { toast, openModal, closeModal } from '../utils/global'
 import { apiGet, apiPost, apiPut, apiDelete } from '../api/client'
+import { registerListGlobals } from '../utils/listGlobals'
+
+/* keep-alive 下 onMounted 只跑一次，而这批内联 onclick 入口与“工作流应用 / 我的应用 /
+   多智能体”重名，谁最后挂载谁占着 window。留一个可重放的引用，由 onActivated 重登记。 */
+var _rebindListGlobals = null
 
 onMounted(function(){
   var root = document.querySelector('#page-root');
@@ -193,7 +198,7 @@ onMounted(function(){
   var agents = [];  // 从后端 /api/agents 加载
   var loaded = false;   // 列表是否已从后端加载完成
   var curFilter = 'all';
-  var uid = (getLoginUser() && getLoginUser().id) || 1;
+  /* 不再传 uid：列表与创建都按登录 token 里的账号归属走（后端 _safe_uid 只认 token） */
 
   /* 时间显示：更新于 刚刚/N 分钟前/HH:MM/昨天/MM-DD */
   function fmtUpd(ts){
@@ -211,7 +216,7 @@ onMounted(function(){
   }
 
   function loadAgents(){
-    apiGet('/api/agents?uid=' + uid).then(function(data){
+    apiGet('/api/agents').then(function(data){
       loaded = true;
       if (data.code === 200){
         agents = data.data || [];
@@ -318,8 +323,7 @@ onMounted(function(){
     apiPost('/api/agents', {
       name: name.value.trim(),
       role: document.getElementById('caRole').value.trim(),
-      description: document.getElementById('caDesc').value.trim(),
-      uid: uid
+      description: document.getElementById('caDesc').value.trim()
     }).then(function(data){
       btn.dataset.busy = ''; btn.textContent = '创建';
       if (data.code === 200){
@@ -345,6 +349,17 @@ onMounted(function(){
   window.copyDebugUrl = copyDebugUrl;
   window.shareDebug = shareDebug;
   window.confirmDelete = confirmDelete;
+
+  /* 上面是挂载时的首次登记；这份可重放实现由 onActivated 在每次回到本页时跑一次，
+     保证 window 上永远是当前可见页面的闭包。 */
+  _rebindListGlobals = function(){
+    registerListGlobals({
+      toggleCardMenu: toggleCardMenu, openEditModal: openEditModal, openDebug: openDebug,
+      sendDebug: sendDebug, copyDebugUrl: copyDebugUrl, shareDebug: shareDebug,
+      confirmDelete: confirmDelete, openTemplatePicker: openTemplatePicker,
+      openCaIconPicker: openCaIconPicker,
+    })
+  }
 
   render();
   loadAgents();
@@ -643,6 +658,10 @@ onMounted(function(){
   window.openCaIconPicker = openCaIconPicker;
 
 })
+onActivated(function(){
+  /* 抢回本视图的内联 onclick 入口（见 _rebindListGlobals 注释） */
+  if (_rebindListGlobals) _rebindListGlobals();
+});
 </script>
 <style>
 /* ---------- Agents 卡片网格 ---------- */

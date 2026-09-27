@@ -8,13 +8,16 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
-from engine.workflow_runner import (
-    _execute_node,
+# 迭代相关实现已拆到 engine/nodes/iteration.py；_execute_node / _identify_iteration_subgraphs 仍在 workflow_runner
+from engine.nodes.iteration import (
     _node_iteration,
-    _identify_iteration_subgraphs,
     _resolve_selector,
     _aggregate_results,
     _execute_sub_graph,
+)
+from engine.workflow_runner import (
+    _execute_node,
+    _identify_iteration_subgraphs,
 )
 
 
